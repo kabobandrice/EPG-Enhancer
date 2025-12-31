@@ -227,7 +227,7 @@ class Plugin:
 
     def _get_program_content_hash(self, program_obj):
         """Generate a hash of the program's content to detect changes.
-        
+
         Note: We exclude start/end times from the hash because the same content
         airing at different times should reuse the same enhancement to avoid
         redundant API calls.
@@ -246,7 +246,7 @@ class Plugin:
     ):
         program_obj = program["program"]
         channels = program["channels"]
-        title, year = self._extract_title_and_year(program_obj.title, program_obj.sub_title)
+        title, year = self._extract_title_and_year(program_obj.title, program_obj.sub_title, program_obj.description)
 
         metadata = None
         error = None
@@ -316,13 +316,24 @@ class Plugin:
             "metadata": metadata,
         }
 
-    def _extract_title_and_year(self, title, sub_title):
+    def _extract_title_and_year(self, title, sub_title, description=None):
+        """Extract clean title and year from title, subtitle, and description."""
         raw_title = title or ""
+
+        # Check for year in title first
         match = re.search(r"\((\d{4})\)", raw_title)
         year = int(match.group(1)) if match else None
-        clean_title = re.sub(r"\s*\(\d{4}\)\s*", "", raw_title).strip()
+
+        # If no year in title, check description
+        if not year and description:
+            match = re.search(r"\((\d{4})\)", description)
+            year = int(match.group(1)) if match else None
+
+        # Clean the title by removing year
+        clean_title = re.sub(r"\s*\(\d{4})\)\s*", "", raw_title).strip()
         if not clean_title and sub_title:
             clean_title = sub_title.strip()
+            
         return clean_title, year
 
     def _lookup_tmdb(self, title, year, api_key):

@@ -2,8 +2,10 @@ import re
 import requests
 from datetime import timedelta
 from django.utils import timezone
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
-from apps.epg.models import ProgramData
+from apps.epg.models import ProgramData, EPGSource
 from apps.channels.models import Channel
 
 
@@ -79,6 +81,13 @@ class Plugin:
             "type": "boolean",
             "default": False,
             "help_text": "When enabled, only preview changes without saving.",
+        },
+        {
+            "id": "auto_enhance",
+            "label": "Auto-Enhance on EPG Updates",
+            "type": "boolean",
+            "default": True,
+            "help_text": "Automatically enhance programs when EPG data is updated.",
         },
     ]
 
@@ -415,3 +424,40 @@ class Plugin:
             parts.append(metadata["overview"])
 
         return "\n".join(parts)
+
+
+# Add signal receiver for automatic triggering
+@receiver(post_save, sender=EPGSource)
+def on_epg_source_updated(sender, instance, **kwargs):
+    """
+    Automatically trigger EPG enhancement when EPG source is updated successfully.
+    This hooks into the built-in EPG refresh completion.
+    """
+    # Only trigger if the EPG source was successfully updated and is active
+    if instance.status == 'success' and instance.is_active and instance.source_type != 'dummy':
+        # Import here to avoid circular imports
+        from apps.plugins.models import Plugin as PluginModel
+        from apps.plugins.tasks import run_plugin_action
+        
+        try:
+            # Get the plugin instance
+            plugin_instance = PluginModel.objects.get(name="EPG Enhancer")
+            plugin_settings = plugin_instance.settings or {}
+            
+            # Check if auto-enhance is enabled
+            if plugin_settings.get("auto_enhance", True):
+                # Run the enrichment in the background
+                run_plugin_action.delay(
+                    plugin_id=plugin_instance.id,
+                    action="enrich",
+                    params={},
+                    user_id=None  # System-triggered
+                )
+        except PluginModel.DoesNotExist:
+            # Plugin not installed, skip
+            pass
+        except Exception as e:
+            # Log error but don't break EPG processing
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to trigger auto-enhancement for EPG {instance.name}: {e}")

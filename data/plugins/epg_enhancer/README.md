@@ -11,6 +11,7 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 - **Lookahead/Lookback Hours**: Time window to enrich programs (default: +12h / -2h).
 - **Max Programs per Run**: Safety cap per invocation (default: 50).
 - **Dry Run**: Preview without saving changes.
+- **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
 
 ## Actions
 - **Preview Enrichment**: Lists programs that would be touched and fetched metadata.
@@ -18,7 +19,8 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 
 ## Behavior
 - Queries `ProgramData` entries within the configured time window, limited to channels that match the group and/or regex filters.
-- Skips programs already tagged by this plugin (stored in `custom_properties.movie_epg_enhancer`).
+- Skips programs already tagged by this plugin (stored in `custom_properties.epg_enhancer`).
+- **Automatic Triggering**: Can automatically run when EPG sources are updated (when auto-enhance is enabled).
 - Appends a formatted metadata block to the program description and records metadata in `custom_properties`.
 - Uses TMDB `search/movie` + `movie/{id}` (with credits/external IDs) or OMDb `t` lookup.
 

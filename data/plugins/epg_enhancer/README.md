@@ -13,6 +13,8 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 - **Channel Name Regex**: Optional regex filter on channel names (e.g. `(?i)movie`).
 - **Lookahead/Lookback Hours**: Time window to enrich programs (default: +12h / -2h).
 - **Max Programs per Run**: Safety cap per invocation (default: 50).
+- **TMDB API Call Limit**: Maximum TMDB API calls per run (0 = unlimited).
+- **OMDb API Call Limit**: Maximum OMDb API calls per run (0 = unlimited, default 1000).
 - **Dry Run**: Preview without saving changes.
 - **Replace Program Title**: Replace the program title using the title template.
 - **Title Template**: Template for titles. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre).
@@ -34,4 +36,5 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 ## Notes
 - For best matches, ensure EPG titles include the movie name (optionally with year). The plugin strips trailing `(YYYY)` when present.
 - Keep the per-run limit modest if you expect many entries; heavy runs should be scheduled via smaller windows.
+- OMDb has a daily request limit of 1,000/day for free accounts. Use **OMDb API Call Limit** and smaller windows to avoid hitting it.
 - Network access to TMDB/OMDb must be allowed from the Dispatcharr host.

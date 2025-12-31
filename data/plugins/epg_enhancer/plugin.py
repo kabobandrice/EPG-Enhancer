@@ -11,6 +11,10 @@ from apps.epg.models import ProgramData, EPGSource
 from apps.channels.models import Channel
 
 
+class ApiCallLimitReached(Exception):
+    pass
+
+
 class Plugin:
     name = "EPG Enhancer"
     version = "0.1.0"
@@ -104,6 +108,20 @@ class Plugin:
             "help_text": "Safety limit for each run to avoid heavy loads.",
         },
         {
+            "id": "tmdb_api_call_limit",
+            "label": "TMDB API Call Limit",
+            "type": "number",
+            "default": 0,
+            "help_text": "Maximum TMDB API calls per run (0 = unlimited).",
+        },
+        {
+            "id": "omdb_api_call_limit",
+            "label": "OMDb API Call Limit",
+            "type": "number",
+            "default": 1000,
+            "help_text": "Maximum OMDb API calls per run (0 = unlimited).",
+        },
+        {
             "id": "dry_run",
             "label": "Dry Run",
             "type": "boolean",
@@ -192,6 +210,8 @@ class Plugin:
         dry_run = bool(settings.get("dry_run", False))
         retry_count = int(settings.get("retry_count", 2) or 0)
         retry_backoff_seconds = float(settings.get("retry_backoff_seconds", 1) or 0)
+        tmdb_api_call_limit = int(settings.get("tmdb_api_call_limit", 0) or 0)
+        omdb_api_call_limit = int(settings.get("omdb_api_call_limit", 1000) or 0)
         replace_title = bool(settings.get("replace_title", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
         title_template = settings.get("title_template", "{title} ({year})") or "{title} ({year})"
@@ -231,6 +251,10 @@ class Plugin:
 
         updated = []
         skipped = []
+        call_counter = {
+            "tmdb": {"count": 0, "limit": tmdb_api_call_limit},
+            "omdb": {"count": 0, "limit": omdb_api_call_limit},
+        }
 
         for program in programs:
             result = self._process_program(
@@ -246,8 +270,12 @@ class Plugin:
                 provider_priority=provider_priority,
                 retry_count=retry_count,
                 retry_backoff_seconds=retry_backoff_seconds,
+                call_counter=call_counter,
                 logger=logger,
             )
+            if result.get("stop"):
+                skipped.append(result)
+                break
             if result["status"] == "updated":
                 updated.append(result)
             else:
@@ -340,6 +368,7 @@ class Plugin:
         provider_priority,
         retry_count,
         retry_backoff_seconds,
+        call_counter,
         logger,
     ):
         program_obj = program["program"]
@@ -368,16 +397,24 @@ class Plugin:
             try:
                 if chosen_provider == "tmdb":
                     metadata = self._call_with_retry(
-                        lambda: self._lookup_tmdb(title, year, tmdb_api_key),
+                        lambda: self._lookup_tmdb(title, year, tmdb_api_key, call_counter["tmdb"]),
                         retries=retry_count,
                         backoff_seconds=retry_backoff_seconds,
                     )
                 else:
                     metadata = self._call_with_retry(
-                        lambda: self._lookup_omdb(title, year, omdb_api_key),
+                        lambda: self._lookup_omdb(title, year, omdb_api_key, call_counter["omdb"]),
                         retries=retry_count,
                         backoff_seconds=retry_backoff_seconds,
                     )
+            except ApiCallLimitReached:
+                return {
+                    "status": "skipped",
+                    "program": program_obj.title,
+                    "channel": channels[0].name if channels else "",
+                    "reason": "API call limit reached",
+                    "stop": True,
+                }
             except Exception as exc:
                 error = str(exc)
                 metadata = None
@@ -491,7 +528,7 @@ class Plugin:
             
         return clean_title, year
 
-    def _lookup_tmdb(self, title, year, api_key):
+    def _lookup_tmdb(self, title, year, api_key, call_counter):
         params = {
             "api_key": api_key,
             "query": title,
@@ -500,6 +537,7 @@ class Plugin:
         if year:
             params["year"] = year
 
+        self._consume_api_call(call_counter)
         search_resp = requests.get(
             "https://api.themoviedb.org/3/search/movie", params=params, timeout=10
         )
@@ -511,6 +549,7 @@ class Plugin:
         # Prefer the most popular result to reduce mismatches on ambiguous titles.
         movie = max(results, key=lambda result: result.get("popularity") or 0)
         tmdb_id = movie.get("id")
+        self._consume_api_call(call_counter)
         detail_resp = requests.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}",
             params={"api_key": api_key, "append_to_response": "credits,release_dates,external_ids"},
@@ -543,10 +582,11 @@ class Plugin:
             "ratings": ratings,
         }
 
-    def _lookup_omdb(self, title, year, api_key):
+    def _lookup_omdb(self, title, year, api_key, call_counter):
         params = {"apikey": api_key, "t": title, "type": "movie"}
         if year:
             params["y"] = year
+        self._consume_api_call(call_counter)
         resp = requests.get("https://www.omdbapi.com/", params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -641,12 +681,20 @@ class Plugin:
         while True:
             try:
                 return func()
+            except ApiCallLimitReached:
+                raise
             except Exception:
                 if attempt >= retries:
                     raise
                 attempt += 1
                 if backoff_seconds:
                     time.sleep(backoff_seconds)
+
+    def _consume_api_call(self, call_counter):
+        limit = call_counter.get("limit") or 0
+        if limit > 0 and call_counter.get("count", 0) >= limit:
+            raise ApiCallLimitReached()
+        call_counter["count"] = call_counter.get("count", 0) + 1
 
 
 # Add signal receiver for automatic triggering

@@ -91,6 +91,13 @@ class Plugin:
             "help_text": "When enabled, replace the program title with the metadata title.",
         },
         {
+            "id": "title_template",
+            "label": "Title Template",
+            "type": "string",
+            "default": "{title} ({year})",
+            "help_text": "Template used when replacing titles. Tokens: {title} (movie title), {year} (release year), {genre} (first genre).",
+        },
+        {
             "id": "description_mode",
             "label": "Description Update Mode",
             "type": "select",
@@ -102,11 +109,15 @@ class Plugin:
             "help_text": "Choose whether to append metadata or replace the description entirely.",
         },
         {
-            "id": "description_fields",
-            "label": "Description Fields",
+            "id": "description_template",
+            "label": "Description Template",
             "type": "string",
-            "default": "title,genres,cast,scores,overview",
-            "help_text": "Comma-separated fields to include (title, genres, cast, scores, overview).",
+            "default": "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}",
+            "help_text": (
+                "Template for the metadata block. Tokens: {title} (movie title), "
+                "{year} (release year), {genre} (first genre), {genres} (all genres), "
+                "{cast} (top cast list), {scores} (ratings summary), {overview} (plot)."
+            ),
         },
         {
             "id": "auto_enhance",
@@ -153,14 +164,11 @@ class Plugin:
         dry_run = bool(settings.get("dry_run", False))
         replace_title = bool(settings.get("replace_title", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
-        description_fields = settings.get(
-            "description_fields", "title,genres,cast,scores,overview"
-        )
-        description_fields = {
-            field.strip().lower()
-            for field in description_fields.split(",")
-            if field.strip()
-        }
+        title_template = settings.get("title_template", "{title} ({year})") or "{title} ({year})"
+        description_template = settings.get(
+            "description_template",
+            "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}",
+        ) or "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}"
 
         if provider == "tmdb" and not tmdb_api_key:
             return {"status": "error", "message": "TMDB API key is required when provider is TMDB."}
@@ -199,7 +207,8 @@ class Plugin:
                 dry_run=dry_run or action == "preview",
                 replace_title=replace_title,
                 description_mode=description_mode,
-                description_fields=description_fields,
+                title_template=title_template,
+                description_template=description_template,
                 logger=logger,
             )
             if result["status"] == "updated":
@@ -289,7 +298,8 @@ class Plugin:
         dry_run,
         replace_title,
         description_mode,
-        description_fields,
+        title_template,
+        description_template,
         logger,
     ):
         program_obj = program["program"]
@@ -315,14 +325,14 @@ class Plugin:
                 "reason": error or "No metadata found",
             }
 
-        enriched_block = self._format_metadata_block(metadata, description_fields)
+        enriched_block = self._render_template(description_template, metadata)
         if not enriched_block:
             return {
                 "status": "skipped",
                 "program": program_obj.title,
                 "channel": channels[0].name if channels else "",
                 "metadata": metadata,
-                "reason": "No metadata fields selected",
+                "reason": "Description template rendered empty",
             }
 
         # Content-based caching: only skip if we've processed this exact program content before
@@ -358,13 +368,11 @@ class Plugin:
 
         update_fields = ["description", "custom_properties"]
 
-        if replace_title and metadata.get("title"):
-            year = metadata.get("year")
-            new_title = metadata["title"]
-            if year and str(year) not in new_title:
-                new_title = f"{new_title} ({year})"
-            program_obj.title = new_title
-            update_fields.append("title")
+        if replace_title:
+            new_title = self._render_title_template(title_template, metadata)
+            if new_title:
+                program_obj.title = new_title
+                update_fields.append("title")
 
         stored_content_hash = self._get_content_hash(
             program_obj.title,
@@ -501,42 +509,63 @@ class Plugin:
             "ratings": ratings,
         }
 
-    def _format_metadata_block(self, metadata, include_fields=None):
-        if include_fields is None:
-            include_fields = {"title", "genres", "cast", "scores", "overview"}
+    def _render_title_template(self, template, metadata):
+        context = self._build_template_context(metadata)
+        title_context = {
+            "title": context["title"],
+            "year": context["year"],
+            "genre": context["genre"],
+        }
+        return self._render_template_from_context(template, title_context)
 
-        parts = []
-        include_fields = {field.lower() for field in include_fields}
-        if "title" in include_fields:
-            title_line = metadata.get("title", "Unknown title")
-            year = metadata.get("year")
-            if year:
-                title_line = f"{title_line} ({year})"
-            if "genres" in include_fields and metadata.get("genres"):
-                title_line = f"{title_line} - {', '.join(metadata['genres'])}"
-            parts.append(title_line)
+    def _render_template(self, template, metadata):
+        context = self._build_template_context(metadata)
+        return self._render_template_from_context(template, context)
 
-        if "cast" in include_fields and metadata.get("cast"):
-            parts.append("Cast: " + ", ".join(metadata["cast"]))
+    def _build_template_context(self, metadata):
+        genres_list = metadata.get("genres") or []
+        cast_list = metadata.get("cast") or []
+        ratings = metadata.get("ratings") or {}
 
-        if "scores" in include_fields:
-            ratings = metadata.get("ratings") or {}
-            rating_bits = []
-            if ratings.get("tmdb"):
-                rating_bits.append(f"TMDB {ratings['tmdb']}")
-            if ratings.get("imdb"):
-                rating_bits.append(f"IMDB {ratings['imdb']}")
-            if ratings.get("rt"):
-                rating_bits.append(f"RT {ratings['rt']}")
-            if ratings.get("metacritic"):
-                rating_bits.append(f"Metacritic {ratings['metacritic']}")
-            if rating_bits:
-                parts.append("Scores: " + " | ".join(rating_bits))
+        rating_bits = []
+        if ratings.get("tmdb"):
+            rating_bits.append(f"TMDB {ratings['tmdb']}")
+        if ratings.get("imdb"):
+            rating_bits.append(f"IMDB {ratings['imdb']}")
+        if ratings.get("rt"):
+            rating_bits.append(f"RT {ratings['rt']}")
+        if ratings.get("metacritic"):
+            rating_bits.append(f"Metacritic {ratings['metacritic']}")
 
-        if "overview" in include_fields and metadata.get("overview"):
-            parts.append(metadata["overview"])
+        return {
+            "title": metadata.get("title") or "",
+            "year": str(metadata.get("year") or ""),
+            "genre": genres_list[0] if genres_list else "",
+            "genres": ", ".join(genres_list) if genres_list else "",
+            "cast": ", ".join(cast_list) if cast_list else "",
+            "scores": " | ".join(rating_bits) if rating_bits else "",
+            "overview": metadata.get("overview") or "",
+        }
 
-        return "\n".join(parts)
+    def _render_template_from_context(self, template, context):
+        rendered = template or ""
+        for key, value in context.items():
+            rendered = rendered.replace(f"{{{key}}}", value)
+        rendered = re.sub(r"\{[a-z_]+\}", "", rendered)
+
+        lines = []
+        for line in rendered.splitlines():
+            cleaned = re.sub(r"\(\s*\)", "", line)
+            cleaned = re.sub(r"\s*-\s*$", "", cleaned)
+            cleaned = re.sub(r"\s{2,}", " ", cleaned).rstrip()
+            stripped = cleaned.strip()
+            if not stripped:
+                continue
+            if re.match(r"^[A-Za-z ]+:\s*$", stripped):
+                continue
+            lines.append(cleaned)
+
+        return "\n".join(lines).strip()
 
 
 # Add signal receiver for automatic triggering

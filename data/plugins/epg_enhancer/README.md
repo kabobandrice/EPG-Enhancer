@@ -15,6 +15,9 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 - **Max Programs per Run**: Safety cap per invocation (default: 50).
 - **TMDB API Call Limit**: Maximum TMDB API calls per run (0 = unlimited).
 - **OMDb API Call Limit**: Maximum OMDb API calls per run (0 = unlimited, default 1000).
+- **Enable Metadata Cache**: Reuse metadata across refreshes to reduce API calls.
+- **Cache TTL (hours)**: Expire cached metadata after this many hours (0 = never).
+- **Cache Max Entries**: Maximum cached items to keep (0 = unlimited).
 - **Dry Run**: Preview without saving changes.
 - **Replace Program Title**: Replace the program title using the title template.
 - **Title Template**: Template for titles. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre).

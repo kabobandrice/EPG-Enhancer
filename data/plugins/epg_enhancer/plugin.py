@@ -1,9 +1,12 @@
 import re
+import os
+import json
 import time
 import requests
 import hashlib
 from datetime import timedelta
 from django.utils import timezone
+from django.conf import settings
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
@@ -106,6 +109,27 @@ class Plugin:
             "type": "number",
             "default": 50,
             "help_text": "Safety limit for each run to avoid heavy loads.",
+        },
+        {
+            "id": "cache_enabled",
+            "label": "Enable Metadata Cache",
+            "type": "boolean",
+            "default": True,
+            "help_text": "Reuse metadata across refreshes to reduce API calls.",
+        },
+        {
+            "id": "cache_ttl_hours",
+            "label": "Cache TTL (hours)",
+            "type": "number",
+            "default": 48,
+            "help_text": "Expire cached metadata after this many hours (0 = never).",
+        },
+        {
+            "id": "cache_max_entries",
+            "label": "Cache Max Entries",
+            "type": "number",
+            "default": 5000,
+            "help_text": "Maximum cached items to keep (0 = unlimited).",
         },
         {
             "id": "tmdb_api_call_limit",
@@ -212,6 +236,9 @@ class Plugin:
         retry_backoff_seconds = float(settings.get("retry_backoff_seconds", 1) or 0)
         tmdb_api_call_limit = int(settings.get("tmdb_api_call_limit", 0) or 0)
         omdb_api_call_limit = int(settings.get("omdb_api_call_limit", 1000) or 0)
+        cache_enabled = bool(settings.get("cache_enabled", True))
+        cache_ttl_hours = float(settings.get("cache_ttl_hours", 48) or 0)
+        cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
         replace_title = bool(settings.get("replace_title", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
         title_template = settings.get("title_template", "{title} ({year})") or "{title} ({year})"
@@ -255,6 +282,12 @@ class Plugin:
             "tmdb": {"count": 0, "limit": tmdb_api_call_limit},
             "omdb": {"count": 0, "limit": omdb_api_call_limit},
         }
+        cache_context = self._load_cache_context(
+            enabled=cache_enabled,
+            ttl_hours=cache_ttl_hours,
+            max_entries=cache_max_entries,
+            logger=logger,
+        )
 
         for program in programs:
             result = self._process_program(
@@ -271,6 +304,7 @@ class Plugin:
                 retry_count=retry_count,
                 retry_backoff_seconds=retry_backoff_seconds,
                 call_counter=call_counter,
+                cache_context=cache_context,
                 logger=logger,
             )
             if result.get("stop"):
@@ -280,6 +314,9 @@ class Plugin:
                 updated.append(result)
             else:
                 skipped.append(result)
+
+        if cache_context.get("dirty"):
+            self._save_cache_context(cache_context, logger=logger)
 
         summary = {
             "status": "ok",
@@ -369,6 +406,7 @@ class Plugin:
         retry_count,
         retry_backoff_seconds,
         call_counter,
+        cache_context,
         logger,
     ):
         program_obj = program["program"]
@@ -378,6 +416,12 @@ class Plugin:
         metadata = None
         error = None
         used_provider = None
+        cache_key = self._get_program_content_hash(program_obj)
+        if cache_context.get("enabled"):
+            cached = self._cache_get(cache_context, cache_key)
+            if cached:
+                metadata = cached.get("metadata")
+                used_provider = cached.get("provider")
 
         provider_order = []
         if provider == "both":
@@ -389,6 +433,8 @@ class Plugin:
             provider_order = [provider]
 
         for chosen_provider in provider_order:
+            if metadata:
+                break
             if chosen_provider == "tmdb" and not tmdb_api_key:
                 continue
             if chosen_provider == "omdb" and not omdb_api_key:
@@ -421,6 +467,8 @@ class Plugin:
 
             if metadata:
                 used_provider = chosen_provider
+                if cache_context.get("enabled"):
+                    self._cache_set(cache_context, cache_key, metadata, used_provider)
                 break
 
         if not metadata:
@@ -695,6 +743,123 @@ class Plugin:
         if limit > 0 and call_counter.get("count", 0) >= limit:
             raise ApiCallLimitReached()
         call_counter["count"] = call_counter.get("count", 0) + 1
+
+    def _load_cache_context(self, enabled, ttl_hours, max_entries, logger=None):
+        context = {
+            "enabled": enabled,
+            "ttl_seconds": max(ttl_hours, 0) * 3600,
+            "max_entries": max_entries,
+            "path": self._get_cache_path(),
+            "entries": {},
+            "dirty": False,
+        }
+        if not enabled:
+            return context
+
+        try:
+            with open(context["path"], "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+                context["entries"] = payload.get("entries", {})
+        except FileNotFoundError:
+            return context
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer cache load failed: %s", exc)
+            return context
+
+        self._prune_cache(context)
+        return context
+
+    def _save_cache_context(self, context, logger=None):
+        if not context.get("enabled"):
+            return
+
+        cache_dir = os.path.dirname(context["path"])
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        lock_path = context["path"] + ".lock"
+        lock_fd = self._acquire_cache_lock(lock_path)
+        if lock_fd is None:
+            if logger:
+                logger.warning("EPG Enhancer cache lock timeout. Skipping save.")
+            return
+
+        try:
+            self._prune_cache(context)
+            payload = {
+                "version": 1,
+                "updated_at": time.time(),
+                "entries": context["entries"],
+            }
+            with open(context["path"], "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"))
+        finally:
+            self._release_cache_lock(lock_path, lock_fd)
+
+    def _prune_cache(self, context):
+        entries = context.get("entries", {})
+        ttl_seconds = context.get("ttl_seconds", 0)
+        max_entries = context.get("max_entries", 0)
+        now = time.time()
+
+        if ttl_seconds > 0:
+            expired = [
+                key for key, entry in entries.items()
+                if now - entry.get("ts", now) > ttl_seconds
+            ]
+            for key in expired:
+                entries.pop(key, None)
+
+        if max_entries > 0 and len(entries) > max_entries:
+            ordered = sorted(
+                entries.items(),
+                key=lambda item: item[1].get("last_used", item[1].get("ts", 0)),
+                reverse=True,
+            )
+            entries = dict(ordered[:max_entries])
+
+        context["entries"] = entries
+
+    def _cache_get(self, context, cache_key):
+        entry = context.get("entries", {}).get(cache_key)
+        if not entry:
+            return None
+        entry["last_used"] = time.time()
+        context["dirty"] = True
+        return entry
+
+    def _cache_set(self, context, cache_key, metadata, provider):
+        context.setdefault("entries", {})[cache_key] = {
+            "metadata": metadata,
+            "provider": provider,
+            "ts": time.time(),
+            "last_used": time.time(),
+        }
+        context["dirty"] = True
+
+    def _get_cache_path(self):
+        base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
+        return os.path.join(str(base_dir), "epg_enhancer_cache.json")
+
+    def _acquire_cache_lock(self, lock_path, timeout_seconds=5):
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                os.write(fd, str(os.getpid()).encode("ascii", "ignore"))
+                return fd
+            except FileExistsError:
+                time.sleep(0.1)
+        return None
+
+    def _release_cache_lock(self, lock_path, fd):
+        try:
+            os.close(fd)
+        finally:
+            try:
+                os.remove(lock_path)
+            except FileNotFoundError:
+                pass
 
 
 # Add signal receiver for automatic triggering

@@ -3,9 +3,12 @@
 Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres, cast, scores) from TMDB or OMDb/IMDB and appends it to the program description.
 
 ## Settings
-- **Metadata Provider**: `TMDB` (default) or `OMDb / IMDB`.
-- **TMDB API Key**: Required for TMDB provider.
-- **OMDb API Key**: Optional, used when provider is OMDb; also adds RT/Metacritic/IMDB scores when available.
+- **Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `TMDB + OMDb (fallback)`.
+- **Provider Priority**: When using both, choose which provider to try first.
+- **TMDB API Key**: Required for TMDB provider. Get one at https://www.themoviedb.org/settings/api
+- **OMDb API Key**: Required for OMDb provider. Get one at https://www.omdbapi.com/apikey.aspx
+- **API Retry Count**: Retry failed API calls this many times.
+- **Retry Backoff (seconds)**: Wait time between retry attempts.
 - **Channel Group Name Filter**: Only process channels in this group name (case-insensitive). Leave blank for all.
 - **Channel Name Regex**: Optional regex filter on channel names (e.g. `(?i)movie`).
 - **Lookahead/Lookback Hours**: Time window to enrich programs (default: +12h / -2h).

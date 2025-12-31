@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 import hashlib
 from datetime import timedelta
@@ -24,8 +25,34 @@ class Plugin:
             "options": [
                 {"value": "tmdb", "label": "TMDB"},
                 {"value": "omdb", "label": "OMDb / IMDB"},
+                {"value": "both", "label": "TMDB + OMDb (fallback)"},
             ],
             "help_text": "TMDB requires an API key. OMDb also requires an API key for reliable results.",
+        },
+        {
+            "id": "provider_priority",
+            "label": "Provider Priority (when using both)",
+            "type": "select",
+            "default": "tmdb_first",
+            "options": [
+                {"value": "tmdb_first", "label": "TMDB first"},
+                {"value": "omdb_first", "label": "OMDb first"},
+            ],
+            "help_text": "Choose which provider to try first when using TMDB + OMDb.",
+        },
+        {
+            "id": "retry_count",
+            "label": "API Retry Count",
+            "type": "number",
+            "default": 2,
+            "help_text": "Retry failed API calls this many times before giving up.",
+        },
+        {
+            "id": "retry_backoff_seconds",
+            "label": "Retry Backoff (seconds)",
+            "type": "number",
+            "default": 1,
+            "help_text": "Seconds to wait between retry attempts.",
         },
         {
             "id": "tmdb_api_key",
@@ -95,7 +122,7 @@ class Plugin:
             "label": "Title Template",
             "type": "string",
             "default": "{title} ({year})",
-            "help_text": "Template used when replacing titles. Tokens: {title} (movie title), {year} (release year), {genre} (first genre).",
+            "help_text": "Template used when replacing titles. Tokens: {title}, {year}, {genre}",
         },
         {
             "id": "description_mode",
@@ -116,7 +143,7 @@ class Plugin:
             "help_text": (
                 "Template for the metadata block. Tokens: {title} (movie title), "
                 "{year} (release year), {genre} (first genre), {genres} (all genres), "
-                "{cast} (top cast list), {scores} (ratings summary), {overview} (plot)."
+                "{cast} (top cast list), {scores} (ratings summary), {overview} (plot summary)."
             ),
         },
         {
@@ -154,6 +181,7 @@ class Plugin:
             return {"status": "error", "message": f"Unknown action {action}"}
 
         provider = settings.get("provider", "tmdb")
+        provider_priority = settings.get("provider_priority", "tmdb_first")
         tmdb_api_key = settings.get("tmdb_api_key", "").strip()
         omdb_api_key = settings.get("omdb_api_key", "").strip()
         channel_group_name = settings.get("channel_group_name", "").strip()
@@ -162,6 +190,8 @@ class Plugin:
         lookback_hours = int(settings.get("lookback_hours", 2) or 0)
         max_programs = int(settings.get("max_programs", 50) or 50)
         dry_run = bool(settings.get("dry_run", False))
+        retry_count = int(settings.get("retry_count", 2) or 0)
+        retry_backoff_seconds = float(settings.get("retry_backoff_seconds", 1) or 0)
         replace_title = bool(settings.get("replace_title", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
         title_template = settings.get("title_template", "{title} ({year})") or "{title} ({year})"
@@ -172,6 +202,10 @@ class Plugin:
 
         if provider == "tmdb" and not tmdb_api_key:
             return {"status": "error", "message": "TMDB API key is required when provider is TMDB."}
+        if provider == "omdb" and not omdb_api_key:
+            return {"status": "error", "message": "OMDb API key is required when provider is OMDb."}
+        if provider == "both" and not (tmdb_api_key or omdb_api_key):
+            return {"status": "error", "message": "At least one API key is required when provider is TMDB + OMDb."}
 
         if channel_name_regex:
             try:
@@ -209,6 +243,9 @@ class Plugin:
                 description_mode=description_mode,
                 title_template=title_template,
                 description_template=description_template,
+                provider_priority=provider_priority,
+                retry_count=retry_count,
+                retry_backoff_seconds=retry_backoff_seconds,
                 logger=logger,
             )
             if result["status"] == "updated":
@@ -300,6 +337,9 @@ class Plugin:
         description_mode,
         title_template,
         description_template,
+        provider_priority,
+        retry_count,
+        retry_backoff_seconds,
         logger,
     ):
         program_obj = program["program"]
@@ -308,14 +348,43 @@ class Plugin:
 
         metadata = None
         error = None
+        used_provider = None
 
-        try:
-            if provider == "tmdb":
-                metadata = self._lookup_tmdb(title, year, tmdb_api_key)
+        provider_order = []
+        if provider == "both":
+            if provider_priority == "omdb_first":
+                provider_order = ["omdb", "tmdb"]
             else:
-                metadata = self._lookup_omdb(title, year, omdb_api_key)
-        except Exception as exc:
-            error = str(exc)
+                provider_order = ["tmdb", "omdb"]
+        else:
+            provider_order = [provider]
+
+        for chosen_provider in provider_order:
+            if chosen_provider == "tmdb" and not tmdb_api_key:
+                continue
+            if chosen_provider == "omdb" and not omdb_api_key:
+                continue
+
+            try:
+                if chosen_provider == "tmdb":
+                    metadata = self._call_with_retry(
+                        lambda: self._lookup_tmdb(title, year, tmdb_api_key),
+                        retries=retry_count,
+                        backoff_seconds=retry_backoff_seconds,
+                    )
+                else:
+                    metadata = self._call_with_retry(
+                        lambda: self._lookup_omdb(title, year, omdb_api_key),
+                        retries=retry_count,
+                        backoff_seconds=retry_backoff_seconds,
+                    )
+            except Exception as exc:
+                error = str(exc)
+                metadata = None
+
+            if metadata:
+                used_provider = chosen_provider
+                break
 
         if not metadata:
             return {
@@ -382,7 +451,7 @@ class Plugin:
 
         plugin_state = {
             "content_hash": stored_content_hash,
-            "provider": provider,
+            "provider": used_provider or provider,
             "title": metadata.get("title"),
             "year": metadata.get("year"),
             "tmdb_id": metadata.get("tmdb_id"),
@@ -566,6 +635,18 @@ class Plugin:
             lines.append(cleaned)
 
         return "\n".join(lines).strip()
+
+    def _call_with_retry(self, func, retries, backoff_seconds):
+        attempt = 0
+        while True:
+            try:
+                return func()
+            except Exception:
+                if attempt >= retries:
+                    raise
+                attempt += 1
+                if backoff_seconds:
+                    time.sleep(backoff_seconds)
 
 
 # Add signal receiver for automatic triggering

@@ -1,5 +1,6 @@
 import re
 import requests
+import hashlib
 from datetime import timedelta
 from django.utils import timezone
 from django.db.models.signals import post_save
@@ -224,6 +225,16 @@ class Plugin:
 
         return programs
 
+    def _get_program_content_hash(self, program_obj):
+        """Generate a hash of the program's content to detect changes.
+        
+        Note: We exclude start/end times from the hash because the same content
+        airing at different times should reuse the same enhancement to avoid
+        redundant API calls.
+        """
+        content = f"{program_obj.title}|{program_obj.sub_title or ''}|{program_obj.description or ''}"
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
     def _process_program(
         self,
         program,
@@ -258,10 +269,16 @@ class Plugin:
 
         enriched_block = self._format_metadata_block(metadata)
 
+        # Content-based caching: only skip if we've processed this exact program content before
         already_applied = False
+        current_content_hash = self._get_program_content_hash(program_obj)
+        
         custom_props = program_obj.custom_properties or {}
         plugin_state = custom_props.get("epg_enhancer", {})
-        if plugin_state.get("provider") == provider and plugin_state.get("title") == metadata.get("title"):
+        
+        # Check if we've processed this exact program content before
+        stored_content_hash = plugin_state.get("content_hash")
+        if stored_content_hash == current_content_hash:
             already_applied = True
 
         if dry_run or already_applied:
@@ -270,7 +287,7 @@ class Plugin:
                 "program": program_obj.title,
                 "channel": channels[0].name if channels else "",
                 "metadata": metadata,
-                "reason": "Already applied" if already_applied else "Preview only",
+                "reason": "Already processed" if already_applied else "Preview only",
             }
 
         new_description = enriched_block
@@ -278,6 +295,7 @@ class Plugin:
             new_description = f"{program_obj.description.strip()}\n\n{enriched_block}"
 
         plugin_state = {
+            "content_hash": current_content_hash,
             "provider": provider,
             "title": metadata.get("title"),
             "year": metadata.get("year"),

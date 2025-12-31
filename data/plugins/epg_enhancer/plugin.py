@@ -181,7 +181,7 @@ class Plugin:
 
         if logger:
             logger.info(
-                "Movie EPG Enhancer finished: updated=%s skipped=%s dry_run=%s",
+                "EPG Enhancer finished: updated=%s skipped=%s dry_run=%s",
                 len(updated),
                 len(skipped),
                 summary["dry_run"],
@@ -260,7 +260,7 @@ class Plugin:
 
         already_applied = False
         custom_props = program_obj.custom_properties or {}
-        plugin_state = custom_props.get("movie_epg_enhancer") or custom_props.get("movie_epg_enricher", {})
+        plugin_state = custom_props.get("epg_enhancer", {})
         if plugin_state.get("provider") == provider and plugin_state.get("title") == metadata.get("title"):
             already_applied = True
 
@@ -285,8 +285,7 @@ class Plugin:
             "imdb_id": metadata.get("imdb_id"),
             "last_updated": timezone.now().isoformat(),
         }
-        custom_props["movie_epg_enhancer"] = plugin_state
-        custom_props.pop("movie_epg_enricher", None)
+        custom_props["epg_enhancer"] = plugin_state
 
         program_obj.description = new_description
         program_obj.custom_properties = custom_props

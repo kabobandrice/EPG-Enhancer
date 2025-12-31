@@ -84,6 +84,31 @@ class Plugin:
             "help_text": "When enabled, only preview changes without saving.",
         },
         {
+            "id": "replace_title",
+            "label": "Replace Program Title",
+            "type": "boolean",
+            "default": False,
+            "help_text": "When enabled, replace the program title with the metadata title.",
+        },
+        {
+            "id": "description_mode",
+            "label": "Description Update Mode",
+            "type": "select",
+            "default": "append",
+            "options": [
+                {"value": "append", "label": "Append metadata block"},
+                {"value": "replace", "label": "Replace description"},
+            ],
+            "help_text": "Choose whether to append metadata or replace the description entirely.",
+        },
+        {
+            "id": "description_fields",
+            "label": "Description Fields",
+            "type": "string",
+            "default": "title,genres,cast,scores,overview",
+            "help_text": "Comma-separated fields to include (title, genres, cast, scores, overview).",
+        },
+        {
             "id": "auto_enhance",
             "label": "Auto-Enhance on EPG Updates",
             "type": "boolean",
@@ -126,6 +151,16 @@ class Plugin:
         lookback_hours = int(settings.get("lookback_hours", 2) or 0)
         max_programs = int(settings.get("max_programs", 50) or 50)
         dry_run = bool(settings.get("dry_run", False))
+        replace_title = bool(settings.get("replace_title", False))
+        description_mode = (settings.get("description_mode", "append") or "append").lower()
+        description_fields = settings.get(
+            "description_fields", "title,genres,cast,scores,overview"
+        )
+        description_fields = {
+            field.strip().lower()
+            for field in description_fields.split(",")
+            if field.strip()
+        }
 
         if provider == "tmdb" and not tmdb_api_key:
             return {"status": "error", "message": "TMDB API key is required when provider is TMDB."}
@@ -162,6 +197,9 @@ class Plugin:
                 tmdb_api_key=tmdb_api_key,
                 omdb_api_key=omdb_api_key,
                 dry_run=dry_run or action == "preview",
+                replace_title=replace_title,
+                description_mode=description_mode,
+                description_fields=description_fields,
                 logger=logger,
             )
             if result["status"] == "updated":
@@ -232,7 +270,14 @@ class Plugin:
         airing at different times should reuse the same enhancement to avoid
         redundant API calls.
         """
-        content = f"{program_obj.title}|{program_obj.sub_title or ''}|{program_obj.description or ''}"
+        return self._get_content_hash(
+            program_obj.title,
+            program_obj.sub_title,
+            program_obj.description,
+        )
+
+    def _get_content_hash(self, title, sub_title, description):
+        content = f"{title}|{sub_title or ''}|{description or ''}"
         return hashlib.md5(content.encode('utf-8')).hexdigest()
 
     def _process_program(
@@ -242,6 +287,9 @@ class Plugin:
         tmdb_api_key,
         omdb_api_key,
         dry_run,
+        replace_title,
+        description_mode,
+        description_fields,
         logger,
     ):
         program_obj = program["program"]
@@ -267,7 +315,15 @@ class Plugin:
                 "reason": error or "No metadata found",
             }
 
-        enriched_block = self._format_metadata_block(metadata)
+        enriched_block = self._format_metadata_block(metadata, description_fields)
+        if not enriched_block:
+            return {
+                "status": "skipped",
+                "program": program_obj.title,
+                "channel": channels[0].name if channels else "",
+                "metadata": metadata,
+                "reason": "No metadata fields selected",
+            }
 
         # Content-based caching: only skip if we've processed this exact program content before
         already_applied = False
@@ -290,12 +346,34 @@ class Plugin:
                 "reason": "Already processed" if already_applied else "Preview only",
             }
 
-        new_description = enriched_block
-        if program_obj.description:
-            new_description = f"{program_obj.description.strip()}\n\n{enriched_block}"
+        if description_mode not in {"append", "replace"}:
+            description_mode = "append"
+
+        if description_mode == "replace":
+            new_description = enriched_block
+        else:
+            new_description = enriched_block
+            if program_obj.description:
+                new_description = f"{program_obj.description.strip()}\n\n{enriched_block}"
+
+        update_fields = ["description", "custom_properties"]
+
+        if replace_title and metadata.get("title"):
+            year = metadata.get("year")
+            new_title = metadata["title"]
+            if year and str(year) not in new_title:
+                new_title = f"{new_title} ({year})"
+            program_obj.title = new_title
+            update_fields.append("title")
+
+        stored_content_hash = self._get_content_hash(
+            program_obj.title,
+            program_obj.sub_title,
+            new_description,
+        )
 
         plugin_state = {
-            "content_hash": current_content_hash,
+            "content_hash": stored_content_hash,
             "provider": provider,
             "title": metadata.get("title"),
             "year": metadata.get("year"),
@@ -307,7 +385,7 @@ class Plugin:
 
         program_obj.description = new_description
         program_obj.custom_properties = custom_props
-        program_obj.save(update_fields=["description", "custom_properties"])
+        program_obj.save(update_fields=update_fields)
 
         return {
             "status": "updated",
@@ -423,33 +501,39 @@ class Plugin:
             "ratings": ratings,
         }
 
-    def _format_metadata_block(self, metadata):
-        parts = []
-        title_line = metadata.get("title", "Unknown title")
-        year = metadata.get("year")
-        if year:
-            title_line = f"{title_line} ({year})"
-        if metadata.get("genres"):
-            title_line = f"{title_line} - {', '.join(metadata['genres'])}"
-        parts.append(title_line)
+    def _format_metadata_block(self, metadata, include_fields=None):
+        if include_fields is None:
+            include_fields = {"title", "genres", "cast", "scores", "overview"}
 
-        if metadata.get("cast"):
+        parts = []
+        include_fields = {field.lower() for field in include_fields}
+        if "title" in include_fields:
+            title_line = metadata.get("title", "Unknown title")
+            year = metadata.get("year")
+            if year:
+                title_line = f"{title_line} ({year})"
+            if "genres" in include_fields and metadata.get("genres"):
+                title_line = f"{title_line} - {', '.join(metadata['genres'])}"
+            parts.append(title_line)
+
+        if "cast" in include_fields and metadata.get("cast"):
             parts.append("Cast: " + ", ".join(metadata["cast"]))
 
-        ratings = metadata.get("ratings") or {}
-        rating_bits = []
-        if ratings.get("tmdb"):
-            rating_bits.append(f"TMDB {ratings['tmdb']}")
-        if ratings.get("imdb"):
-            rating_bits.append(f"IMDB {ratings['imdb']}")
-        if ratings.get("rt"):
-            rating_bits.append(f"RT {ratings['rt']}")
-        if ratings.get("metacritic"):
-            rating_bits.append(f"Metacritic {ratings['metacritic']}")
-        if rating_bits:
-            parts.append("Scores: " + " | ".join(rating_bits))
+        if "scores" in include_fields:
+            ratings = metadata.get("ratings") or {}
+            rating_bits = []
+            if ratings.get("tmdb"):
+                rating_bits.append(f"TMDB {ratings['tmdb']}")
+            if ratings.get("imdb"):
+                rating_bits.append(f"IMDB {ratings['imdb']}")
+            if ratings.get("rt"):
+                rating_bits.append(f"RT {ratings['rt']}")
+            if ratings.get("metacritic"):
+                rating_bits.append(f"Metacritic {ratings['metacritic']}")
+            if rating_bits:
+                parts.append("Scores: " + " | ".join(rating_bits))
 
-        if metadata.get("overview"):
+        if "overview" in include_fields and metadata.get("overview"):
             parts.append(metadata["overview"])
 
         return "\n".join(parts)

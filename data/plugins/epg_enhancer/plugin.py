@@ -353,7 +353,8 @@ class Plugin:
         if not results:
             return None
 
-        movie = results[0]
+        # Prefer the most popular result to reduce mismatches on ambiguous titles.
+        movie = max(results, key=lambda result: result.get("popularity") or 0)
         tmdb_id = movie.get("id")
         detail_resp = requests.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}",

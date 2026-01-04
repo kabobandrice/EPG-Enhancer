@@ -2,6 +2,7 @@ import re
 import os
 import json
 import time
+import difflib
 import requests
 import hashlib
 from datetime import timedelta
@@ -60,6 +61,13 @@ class Plugin:
             "type": "number",
             "default": 1,
             "help_text": "Seconds to wait between retry attempts.",
+        },
+        {
+            "id": "min_title_similarity",
+            "label": "Min Title Similarity (TMDB)",
+            "type": "number",
+            "default": 0.72,
+            "help_text": "Minimum title similarity to accept a TMDB match (0 = disabled).",
         },
         {
             "id": "tmdb_api_key",
@@ -236,6 +244,7 @@ class Plugin:
         retry_backoff_seconds = float(settings.get("retry_backoff_seconds", 1) or 0)
         tmdb_api_call_limit = int(settings.get("tmdb_api_call_limit", 0) or 0)
         omdb_api_call_limit = int(settings.get("omdb_api_call_limit", 1000) or 0)
+        min_title_similarity = float(settings.get("min_title_similarity", 0.72) or 0)
         cache_enabled = bool(settings.get("cache_enabled", True))
         cache_ttl_hours = float(settings.get("cache_ttl_hours", 48) or 0)
         cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
@@ -305,6 +314,7 @@ class Plugin:
                 retry_backoff_seconds=retry_backoff_seconds,
                 call_counter=call_counter,
                 cache_context=cache_context,
+                min_title_similarity=min_title_similarity,
                 logger=logger,
             )
             if result.get("stop"):
@@ -407,6 +417,7 @@ class Plugin:
         retry_backoff_seconds,
         call_counter,
         cache_context,
+        min_title_similarity,
         logger,
     ):
         program_obj = program["program"]
@@ -443,7 +454,13 @@ class Plugin:
             try:
                 if chosen_provider == "tmdb":
                     metadata = self._call_with_retry(
-                        lambda: self._lookup_tmdb(title, year, tmdb_api_key, call_counter["tmdb"]),
+                        lambda: self._lookup_tmdb(
+                            title,
+                            year,
+                            tmdb_api_key,
+                            call_counter["tmdb"],
+                            min_title_similarity,
+                        ),
                         retries=retry_count,
                         backoff_seconds=retry_backoff_seconds,
                     )
@@ -576,7 +593,7 @@ class Plugin:
             
         return clean_title, year
 
-    def _lookup_tmdb(self, title, year, api_key, call_counter):
+    def _lookup_tmdb(self, title, year, api_key, call_counter, min_title_similarity):
         params = {
             "api_key": api_key,
             "query": title,
@@ -594,8 +611,20 @@ class Plugin:
         if not results:
             return None
 
-        # Prefer the most popular result to reduce mismatches on ambiguous titles.
-        movie = max(results, key=lambda result: result.get("popularity") or 0)
+        results.sort(key=lambda result: result.get("popularity") or 0, reverse=True)
+        if min_title_similarity > 0:
+            movie = None
+            for candidate in results:
+                candidate_title = candidate.get("title") or ""
+                similarity = self._title_similarity(title, candidate_title)
+                if similarity >= min_title_similarity:
+                    movie = candidate
+                    break
+            if not movie:
+                return None
+        else:
+            # Prefer the most popular result to reduce mismatches on ambiguous titles.
+            movie = results[0]
         tmdb_id = movie.get("id")
         self._consume_api_call(call_counter)
         detail_resp = requests.get(
@@ -723,6 +752,20 @@ class Plugin:
             lines.append(cleaned)
 
         return "\n".join(lines).strip()
+
+    def _title_similarity(self, left, right):
+        left_norm = self._normalize_title(left)
+        right_norm = self._normalize_title(right)
+        if not left_norm or not right_norm:
+            return 0.0
+        return difflib.SequenceMatcher(a=left_norm, b=right_norm).ratio()
+
+    def _normalize_title(self, title):
+        value = (title or "").lower()
+        value = re.sub(r"\(\d{4}\)", "", value)
+        value = re.sub(r"[^a-z0-9\s]", " ", value)
+        value = re.sub(r"\s+", " ", value)
+        return value.strip()
 
     def _call_with_retry(self, func, retries, backoff_seconds):
         attempt = 0

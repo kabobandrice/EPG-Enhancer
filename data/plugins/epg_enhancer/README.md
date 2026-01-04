@@ -9,6 +9,7 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 - **OMDb API Key**: Required for OMDb provider. Get one at https://www.omdbapi.com/apikey.aspx
 - **API Retry Count**: Retry failed API calls this many times.
 - **Retry Backoff (seconds)**: Wait time between retry attempts.
+- **Min Title Similarity (TMDB)**: Minimum title similarity to accept a TMDB match (0 = disabled).
 - **Channel Group Name Filter**: Only process channels in this group name (case-insensitive). Leave blank for all.
 - **Channel Name Regex**: Optional regex filter on channel names (e.g. `(?i)movie`).
 - **Lookahead/Lookback Hours**: Time window to enrich programs (default: +12h / -2h).

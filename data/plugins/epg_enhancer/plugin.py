@@ -193,7 +193,8 @@ class Plugin:
             "help_text": (
                 "Template for the metadata block. Tokens: {title} (movie title), "
                 "{year} (release year), {genre} (first genre), {genres} (all genres), "
-                "{cast} (top cast list), {scores} (ratings summary), {overview} (plot summary)."
+                "{runtime} (runtime), {cast} (top cast list), {scores} (ratings summary), "
+                "{overview} (plot summary)."
             ),
         },
         {
@@ -656,6 +657,7 @@ class Plugin:
             "genres": [g["name"] for g in detail.get("genres", [])],
             "overview": detail.get("overview"),
             "cast": cast,
+            "runtime": detail.get("runtime"),
             "ratings": ratings,
         }
 
@@ -692,6 +694,7 @@ class Plugin:
             "genres": genres,
             "overview": data.get("Plot"),
             "cast": cast,
+            "runtime": data.get("Runtime"),
             "ratings": ratings,
         }
 
@@ -728,6 +731,7 @@ class Plugin:
             "year": str(metadata.get("year") or ""),
             "genre": genres_list[0] if genres_list else "",
             "genres": ", ".join(genres_list) if genres_list else "",
+            "runtime": str(metadata.get("runtime") or ""),
             "cast": ", ".join(cast_list) if cast_list else "",
             "scores": " | ".join(rating_bits) if rating_bits else "",
             "overview": metadata.get("overview") or "",

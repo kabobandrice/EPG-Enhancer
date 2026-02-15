@@ -25,6 +25,7 @@ jobs:
           cp plugin.py release/epg_enhancer/
           cp helpers.py release/epg_enhancer/
           cp README.md release/epg_enhancer/
+          cp plugin.json release/epg_enhancer/
           python - <<'PY'
           import os
           import zipfile
@@ -51,6 +52,7 @@ jobs:
               "epg_enhancer/plugin.py",
               "epg_enhancer/helpers.py",
               "epg_enhancer/README.md",
+              "epg_enhancer/plugin.json",
           }
           with zipfile.ZipFile("release/epg_enhancer.zip") as zf:
               names = set(zf.namelist())

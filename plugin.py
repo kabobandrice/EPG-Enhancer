@@ -839,9 +839,9 @@ class Plugin:
         for source in (raw_title, raw_sub_title, raw_description):
             if not source:
                 continue
-            ep_match = re.search(r"(?i)S(\d{1,2})\s*E(\d{1,2})", source)
+            ep_match = re.search(r"(?i)\bS(\d{1,2})\s*E(\d{1,2})\b", source)
             if not ep_match:
-                ep_match = re.search(r"(?i)Season\s*(\d{1,2})\s*Episode\s*(\d{1,2})", source)
+                ep_match = re.search(r"(?i)\bSeason\s*(\d{1,2})\s*Episode\s*(\d{1,2})\b", source)
             if ep_match:
                 season = int(ep_match.group(1))
                 episode = int(ep_match.group(2))
@@ -849,8 +849,8 @@ class Plugin:
 
         # Clean the title by removing year and episode markers.
         clean_title = re.sub(r"\s*\(\d{4}\)\s*", "", raw_title)
-        clean_title = re.sub(r"(?i)S\d{1,2}\s*E\d{1,2}", "", clean_title)
-        clean_title = re.sub(r"(?i)Season\s*\d{1,2}\s*Episode\s*\d{1,2}", "", clean_title)
+        clean_title = re.sub(r"(?i)\bS\d{1,2}\s*E\d{1,2}\b", "", clean_title)
+        clean_title = re.sub(r"(?i)\bSeason\s*\d{1,2}\s*Episode\s*\d{1,2}\b", "", clean_title)
         clean_title = re.sub(r"\s{2,}", " ", clean_title).strip(" -:	")
 
         if not clean_title and raw_sub_title:

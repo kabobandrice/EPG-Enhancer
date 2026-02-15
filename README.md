@@ -4,14 +4,20 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 
 Repository layout follows standalone plugin style: `plugin.py`, `helpers.py`, `__init__.py`, and `README.md` at repo root.
 
-## Install
-- **Release asset**: Download `epg_enhancer.zip` from releases and extract it into Dispatcharr `data/plugins/`.
-- **Manual**: Copy `epg_enhancer/` into Dispatcharr `data/plugins/`.
+## Installation Methods
+### Method 1: Git Clone (Recommended)
+The easiest and most reliable install path:
 
-## Build Release Asset
-- From this repository root:
-  - `powershell -ExecutionPolicy Bypass -File scripts/build_release_asset.ps1`
-- Output: `release/epg_enhancer.zip`
+```bash
+cd /path/to/dispatcharr/data/plugins/
+git clone https://github.com/kabobandrice/EPG-Enhancer.git 
+docker compose restart dispatcharr
+```
+
+Then enable the plugin in Dispatcharr `Settings -> Plugins`.
+
+### Method 2: Download Release Asset
+Download `epg_enhancer.zip` from the Releases page, then import via `Settings -> Plugins -> Import`.
 
 ## Settings
 - **Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `TMDB + OMDb (fallback)`.

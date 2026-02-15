@@ -23,12 +23,7 @@ LOGGER = logging.getLogger("plugins.epg_enhancer")
 
 DEFAULT_TITLE_TEMPLATE = "{title} ({year})"
 
-DEFAULT_DESCRIPTION_TEMPLATE = (
-    "{title} ({year}) - {genres}\n"
-    "Cast: {cast}\n"
-    "Scores: {scores}\n"
-    "{overview}"
-)
+DEFAULT_DESCRIPTION_TEMPLATE = "{title} ({year}) - {genres}\\nCast: {cast}\\nScores: {scores}\\n{overview}"
 
 class ApiCallLimitReached(Exception):
     pass
@@ -1366,3 +1361,4 @@ def on_epg_source_updated(sender, instance, **kwargs):
         except Exception as e:
             # Log error but do not break EPG processing.
             LOGGER.exception("Failed to trigger auto-enhancement for EPG %s: %s", instance.name, e)
+

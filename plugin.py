@@ -1290,12 +1290,14 @@ class Plugin:
 
     def _start_background_action(self, action_id, logger=None):
         """Queue preview/enhance action in Celery and return immediately."""
-        from apps.plugins.models import Plugin as PluginModel
+        from apps.plugins.models import PluginConfig
         from apps.plugins.tasks import run_plugin_action
 
-        try:
-            plugin_instance = PluginModel.objects.get(name=self.name)
-        except PluginModel.DoesNotExist:
+        plugin_instance = (
+            PluginConfig.objects.filter(key="epg_enhancer").first()
+            or PluginConfig.objects.filter(name=self.name).first()
+        )
+        if not plugin_instance:
             return {
                 "status": "error",
                 "message": "Plugin configuration not found; cannot queue background action.",
@@ -1368,12 +1370,18 @@ def on_epg_source_updated(sender, instance, **kwargs):
     # Only trigger if the EPG source was successfully updated and is active
     if instance.status == 'success' and instance.is_active and instance.source_type != 'dummy':
         # Import here to avoid circular imports
-        from apps.plugins.models import Plugin as PluginModel
+        from apps.plugins.models import PluginConfig
         from apps.plugins.tasks import run_plugin_action
 
         try:
-            # Get the plugin instance
-            plugin_instance = PluginModel.objects.get(name="EPG Enhancer")
+            # Get the plugin instance by key first, fallback by name.
+            plugin_instance = (
+                PluginConfig.objects.filter(key="epg_enhancer").first()
+                or PluginConfig.objects.filter(name="EPG Enhancer").first()
+            )
+            if not plugin_instance:
+                return
+
             plugin_settings = plugin_instance.settings or {}
 
             # Check if auto-enhance is enabled
@@ -1385,9 +1393,6 @@ def on_epg_source_updated(sender, instance, **kwargs):
                     params={"_background": True},
                     user_id=None  # System-triggered
                 )
-        except PluginModel.DoesNotExist:
-            # Plugin not installed, skip
-            pass
         except Exception as e:
             # Log error but do not break EPG processing.
             LOGGER.exception("Failed to trigger auto-enhancement for EPG %s: %s", instance.name, e)

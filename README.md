@@ -60,13 +60,17 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Preview Enhancement**: Lists programs that would be touched, with current and proposed title/description plus fetched metadata.
 - **Enhance Programs**: Queues enhancement in background by default and returns immediately.
 - **Check Progress**: Shows current run progress (attempted, matched, updated, skipped, remaining, API call counts).
-- **View Last Run Result**: Shows the last saved run summary (attempted, matched, updated, skipped, API call counts) and sample details.
+- **View Last Run Result**: Shows the last saved run summary and report file path for the most recent run.
+
+- **Clear Exports**: Deletes `epg_enhancer_*.json` report files from `/data/exports`.
+- **Clear Cache**: Clears plugin cache/progress/last-result state files.
 
 ## Behavior
 - Queries `ProgramData` entries within the configured time window, limited to channels that match the group and/or regex filters.
 - **Smart Caching**: Uses content hashing to detect program changes and only re-processes when content actually changes.
 - **Automatic Triggering**: Can automatically run when EPG sources are updated (when auto-enhance is enabled).
 - Updates title/description based on templates and records metadata in `custom_properties`.
+- Saves a full per-run report to `/data/exports/epg_enhancer_report_*.json` and updates `/data/exports/epg_enhancer_report_latest.json`.
 - Uses TMDB `search/movie` + `movie/{id}` (with credits/external IDs) or OMDb `t` lookup.
 
 ## Notes
@@ -102,16 +106,3 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 ## License
 This project currently has no license file.
 If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
-
-
-
-
-
-
-
-
-
-
-
-
-

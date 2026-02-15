@@ -247,6 +247,16 @@ class Plugin:
             "label": "View Last Run Result",
             "description": "Show summary and samples from the last preview/enhance run.",
         },
+        {
+            "id": "clear_exports",
+            "label": "Clear Exports",
+            "description": "Delete EPG Enhancer export report files from /data/exports.",
+        },
+        {
+            "id": "clear_cache",
+            "label": "Clear Cache",
+            "description": "Clear EPG Enhancer cache/progress/last-result files.",
+        },
     ]
 
     def run(self, action: str, params: dict, context: dict):
@@ -254,7 +264,7 @@ class Plugin:
         settings = context.get("settings", {})
         params = params or {}
 
-        if action not in {"preview", "enhance", "check_progress", "last_result"}:
+        if action not in {"preview", "enhance", "check_progress", "last_result", "clear_exports", "clear_cache"}:
             return {"status": "error", "message": f"Unknown action {action}"}
 
         if action == "check_progress":
@@ -262,6 +272,12 @@ class Plugin:
 
         if action == "last_result":
             return self._load_last_run_result(logger=logger)
+
+        if action == "clear_exports":
+            return self._clear_exports(logger=logger)
+
+        if action == "clear_cache":
+            return self._clear_cache(logger=logger)
 
         # Default preview/enhance paths are asynchronous from UI; workers pass _background=True.
         if action in {"preview", "enhance"} and not params.get("_background"):
@@ -352,7 +368,7 @@ class Plugin:
                 "finished_at": timezone.now().isoformat(),
             }
             self._save_progress(empty_progress, logger=logger)
-            self._save_last_run_result({
+            empty_summary = {
                 "status": "ok",
                 "attempted": 0,
                 "updated": 0,
@@ -362,7 +378,9 @@ class Plugin:
                 "dry_run": dry_run or action == "preview",
                 "api_calls": {"tmdb": 0, "omdb": 0},
                 "details": {"updated": [], "preview": [], "skipped": []},
-            }, logger=logger)
+            }
+            report_file = self._save_full_report(action=action, summary=empty_summary, updated=[], preview=[], skipped=[], logger=logger)
+            self._save_last_run_result(empty_summary, logger=logger, report_file=report_file)
             return {"status": "ok", "message": "No programs matched filters."}
 
         logger.info("EPG Enhancer run matched %s program(s) for processing.", len(programs))
@@ -485,7 +503,15 @@ class Plugin:
                 }
             )
             self._save_progress(progress, logger=logger)
-            self._save_last_run_result(summary, logger=logger)
+            report_file = self._save_full_report(
+                action=action,
+                summary=summary,
+                updated=updated,
+                preview=preview,
+                skipped=skipped,
+                logger=logger,
+            )
+            self._save_last_run_result(summary, logger=logger, report_file=report_file)
 
             if logger:
                 logger.info(
@@ -1027,6 +1053,44 @@ class Plugin:
         base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
         return os.path.join(str(base_dir), "epg_enhancer_last_result.json")
 
+    def _get_exports_dir(self):
+        return os.path.join(os.sep, "data", "exports")
+
+    def _write_json_file(self, path, payload, logger=None):
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"))
+
+    def _save_full_report(self, action, summary, updated, preview, skipped, logger=None):
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+        exports_dir = self._get_exports_dir()
+        report_file = os.path.join(exports_dir, f"epg_enhancer_report_{timestamp}.json")
+        latest_file = os.path.join(exports_dir, "epg_enhancer_report_latest.json")
+
+        payload = {
+            "generated_at": timezone.now().isoformat(),
+            "action": action,
+            "summary": summary,
+            "details": {
+                "updated": updated,
+                "preview": preview,
+                "skipped": skipped,
+            },
+        }
+
+        try:
+            self._write_json_file(report_file, payload, logger=logger)
+            self._write_json_file(latest_file, payload, logger=logger)
+            if logger:
+                logger.info("EPG Enhancer report saved: %s", report_file)
+            return report_file
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer failed to save full report: %s", exc)
+            return None
+
     def _save_progress(self, progress, logger=None):
         path = self._get_progress_path()
         try:
@@ -1046,6 +1110,7 @@ class Plugin:
                 progress = json.load(handle)
 
             state = progress.get("status", "unknown")
+            action_name = progress.get("action", "unknown")
             attempted = progress.get("attempted", 0)
             total = progress.get("total_programs")
             remaining = progress.get("remaining")
@@ -1059,7 +1124,7 @@ class Plugin:
             total_str = "?" if total is None else str(total)
             remaining_str = "?" if remaining is None else str(remaining)
             message = (
-                f"Progress [{state}] {attempted}/{total_str} attempted, "
+                f"Progress [{action_name}:{state}] {attempted}/{total_str} attempted, "
                 f"remaining {remaining_str}, matched {matched}, updated {updated}, "
                 f"skipped {skipped}, API TMDB/OMDb {tmdb_calls}/{omdb_calls}."
             )
@@ -1083,18 +1148,15 @@ class Plugin:
                 "message": f"Failed to load progress: {exc}",
             }
 
-    def _save_last_run_result(self, summary, logger=None):
+    def _save_last_run_result(self, summary, logger=None, report_file=None):
         path = self._get_last_result_path()
         try:
-            parent = os.path.dirname(path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
             payload = {
                 "saved_at": timezone.now().isoformat(),
                 "summary": summary,
+                "report_file": report_file,
             }
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, separators=(",", ":"))
+            self._write_json_file(path, payload, logger=logger)
         except Exception as exc:
             if logger:
                 logger.warning("EPG Enhancer failed to save last-run result: %s", exc)
@@ -1111,12 +1173,18 @@ class Plugin:
             updated = summary.get("updated", 0)
             skipped = summary.get("skipped", 0)
             dry_run = summary.get("dry_run", False)
+            api_calls = summary.get("api_calls", {})
+            tmdb_calls = api_calls.get("tmdb", 0)
+            omdb_calls = api_calls.get("omdb", 0)
             saved_at = payload.get("saved_at", "")
+            report_file = payload.get("report_file")
 
+            file_part = f" Report: {report_file}." if report_file else ""
             message = (
                 f"Last run ({'preview' if dry_run else 'enhance'}) attempted {attempted}, "
-                f"matched {matched}, updated {updated}, skipped {skipped}. "
-                f"Saved at {saved_at}."
+                f"matched {matched}, updated {updated}, skipped {skipped}, "
+                f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved at {saved_at}."
+                f"{file_part}"
             )
 
             return {
@@ -1137,6 +1205,59 @@ class Plugin:
                 "status": "error",
                 "message": f"Failed to load last run result: {exc}",
             }
+
+    def _clear_exports(self, logger=None):
+        exports_dir = self._get_exports_dir()
+        deleted = 0
+        errors = []
+        try:
+            if os.path.isdir(exports_dir):
+                for name in os.listdir(exports_dir):
+                    if not name.startswith("epg_enhancer_") or not name.endswith(".json"):
+                        continue
+                    file_path = os.path.join(exports_dir, name)
+                    try:
+                        os.remove(file_path)
+                        deleted += 1
+                    except Exception as exc:
+                        errors.append(f"{name}: {exc}")
+        except Exception as exc:
+            return {"status": "error", "message": f"Failed to clear exports: {exc}"}
+
+        message = f"Cleared {deleted} EPG Enhancer export file(s)."
+        if errors:
+            message += f" {len(errors)} error(s): {'; '.join(errors[:3])}"
+        if logger:
+            logger.info(message)
+        return {"status": "ok", "message": message, "deleted": deleted, "errors": errors}
+
+    def _clear_cache(self, logger=None):
+        targets = [
+            self._get_cache_path(),
+            self._get_cache_path() + ".lock",
+            self._get_progress_path(),
+            self._get_last_result_path(),
+        ]
+        deleted = 0
+        missing = 0
+        errors = []
+
+        for path in targets:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    deleted += 1
+                else:
+                    missing += 1
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
+
+        message = f"Cleared cache/state files: deleted={deleted}, missing={missing}."
+        if errors:
+            message += f" {len(errors)} error(s): {'; '.join(errors[:2])}"
+        if logger:
+            logger.info(message)
+        return {"status": "ok" if not errors else "error", "message": message, "deleted": deleted, "missing": missing, "errors": errors}
 
     def _start_background_action(self, action_id, logger=None):
         """Queue preview/enhance action in Celery and return immediately."""
@@ -1241,5 +1362,3 @@ def on_epg_source_updated(sender, instance, **kwargs):
         except Exception as e:
             # Log error but do not break EPG processing.
             LOGGER.exception("Failed to trigger auto-enhancement for EPG %s: %s", instance.name, e)
-
-

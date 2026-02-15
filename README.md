@@ -2,6 +2,17 @@
 
 Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres, cast, scores) from TMDB or OMDb/IMDB and appends it to the program description.
 
+Repository layout follows standalone plugin style: `plugin.py`, `helpers.py`, `__init__.py`, and `README.md` at repo root.
+
+## Install
+- **Release asset**: Download `epg_enhancer.zip` from releases and extract it into Dispatcharr `data/plugins/`.
+- **Manual**: Copy `epg_enhancer/` into Dispatcharr `data/plugins/`.
+
+## Build Release Asset
+- From this repository root:
+  - `powershell -ExecutionPolicy Bypass -File scripts/build_release_asset.ps1`
+- Output: `release/epg_enhancer.zip`
+
 ## Settings
 - **Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `TMDB + OMDb (fallback)`.
 - **Provider Priority**: When using both, choose which provider to try first.

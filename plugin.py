@@ -12,7 +12,7 @@ from django.dispatch import receiver
 
 from apps.epg.models import ProgramData, EPGSource
 from apps.channels.models import Channel
-from .helpers import render_template, render_title_template, title_similarity
+from helpers import render_template, render_title_template, title_similarity
 
 
 class ApiCallLimitReached(Exception):

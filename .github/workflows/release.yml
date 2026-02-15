@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build plugin asset
+        run: |
+          set -euo pipefail
+          mkdir -p release/epg_enhancer
+          cp __init__.py release/epg_enhancer/
+          cp plugin.py release/epg_enhancer/
+          cp helpers.py release/epg_enhancer/
+          cp README.md release/epg_enhancer/
+          cd release
+          zip -r epg_enhancer.zip epg_enhancer
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: epg_enhancer
+          path: release/epg_enhancer.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/epg_enhancer.zip

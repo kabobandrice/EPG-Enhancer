@@ -2,7 +2,6 @@
 
 Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres, cast, scores) from TMDB or OMDb/IMDB and appends it to the program description.
 
-Repository layout follows standalone plugin style: `plugin.py`, `helpers.py`, `__init__.py`, and `README.md` at repo root.
 
 ## Installation Methods
 ### Method 1: Git Clone (Recommended)
@@ -59,3 +58,34 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - Keep the per-run limit modest if you expect many entries; heavy runs should be scheduled via smaller windows.
 - OMDb has a daily request limit of 1,000/day for free accounts. Use **OMDb API Call Limit** and smaller windows to avoid hitting it.
 - Network access to TMDB/OMDb must be allowed from the Dispatcharr host.
+
+## Quick Start
+Use this baseline for a safe first run:
+- Provider: `both`
+- Provider Priority: `tmdb_first`
+- Add TMDB and OMDb API keys
+- Dry Run: `true`
+- Lookahead Hours: `4`
+- Lookback Hours: `1`
+- Max Programs per Run: `10`
+- Channel Group Name Filter: `movies` (or your target group)
+- Min Title Similarity (TMDB): `0.72`
+
+After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
+
+## Troubleshooting
+- **No programs matched filters**: widen lookahead/lookback window, clear channel filters, or increase max programs.
+- **No metadata found**: check title quality, lower TMDB similarity threshold slightly, and verify API keys.
+- **Auto-enhance not triggering**: ensure `auto_enhance` is enabled, EPG source reaches `success`, and worker is running.
+- **Rate-limit errors / API call limit reached**: lower run size, increase schedule spacing, and tune TMDB/OMDb call limits.
+- **Plugin import issues**: plugin folder must be named exactly `epg_enhancer` under Dispatcharr `data/plugins/`.
+
+## Upgrade Notes
+- Replace the existing `epg_enhancer` plugin folder with the new version.
+- Restart Dispatcharr app and worker processes.
+- Run **Preview Enrichment** before first enrich on each new version.
+- Existing EPG rows may be rebuilt on refresh; enhancements are reapplied by plugin runs.
+
+## License
+This project currently has no license file.
+If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).

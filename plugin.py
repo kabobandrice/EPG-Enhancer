@@ -217,6 +217,13 @@ class Plugin:
             "default": False,
             "help_text": "When enabled, enhancement runs as preview (no database writes).",
         },
+        {
+            "id": "force_reapply",
+            "label": "Force Reapply",
+            "type": "boolean",
+            "default": False,
+            "help_text": "Reapply templates even when a program was already enhanced by this plugin.",
+        },
     ]
 
     actions = [
@@ -286,6 +293,7 @@ class Plugin:
         lookback_hours = int(settings.get("lookback_hours", 2) or 0)
         max_programs = int(settings.get("max_programs", 50) or 50)
         dry_run = bool(settings.get("dry_run", False))
+        force_reapply = bool(settings.get("force_reapply", False))
         retry_count = int(settings.get("retry_count", 2) or 0)
         retry_backoff_seconds = float(settings.get("retry_backoff_seconds", 1) or 0)
         tmdb_api_call_limit = int(settings.get("tmdb_api_call_limit", 0) or 0)
@@ -423,6 +431,7 @@ class Plugin:
                     tmdb_api_key=tmdb_api_key,
                     omdb_api_key=omdb_api_key,
                     dry_run=dry_mode,
+                    force_reapply=force_reapply,
                     replace_title=replace_title,
                     description_mode=description_mode,
                     title_template=title_template,
@@ -594,6 +603,7 @@ class Plugin:
         tmdb_api_key,
         omdb_api_key,
         dry_run,
+        force_reapply,
         replace_title,
         description_mode,
         title_template,
@@ -733,8 +743,8 @@ class Plugin:
         if stored_content_hash == current_content_hash:
             already_applied = True
 
-        if dry_run or already_applied:
-            if already_applied:
+        if dry_run or (already_applied and not force_reapply):
+            if already_applied and not force_reapply:
                 logger.info("EPG Enhancer skipped already-processed content: program=%s", program_obj.title)
             result = {
                 "status": "skipped" if already_applied else "preview",
@@ -1214,9 +1224,9 @@ class Plugin:
 
             message = (
                 f"Last run ({'dry-run' if dry_run else 'enhance'}) attempted {attempted}, "
+                f"Report: {report_file}"
                 f"matched {matched}, updated {updated}, skipped {skipped}, "
                 f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved: {saved_at}. "
-                f"Report: {report_file}."
             )
 
             return {

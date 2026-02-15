@@ -5,35 +5,225 @@
   "author": "kabobandrice",
   "help_url": "https://github.com/kabobandrice/EPG-Enhancer",
   "fields": [
-    {"id": "provider", "label": "Metadata Provider", "type": "select", "default": "tmdb", "options": [{"value": "tmdb", "label": "TMDB"}, {"value": "omdb", "label": "OMDb / IMDB"}, {"value": "both", "label": "TMDB + OMDb (fallback)"}]},
-    {"id": "provider_priority", "label": "Provider Priority (when using both)", "type": "select", "default": "tmdb_first", "options": [{"value": "tmdb_first", "label": "TMDB first"}, {"value": "omdb_first", "label": "OMDb first"}]},
-    {"id": "retry_count", "label": "API Retry Count", "type": "number", "default": 2},
-    {"id": "retry_backoff_seconds", "label": "Retry Backoff (seconds)", "type": "number", "default": 1},
-    {"id": "min_title_similarity", "label": "Min Title Similarity (TMDB)", "type": "number", "default": 0.72},
-    {"id": "tmdb_api_key", "label": "TMDB API Key", "type": "string", "default": ""},
-    {"id": "omdb_api_key", "label": "OMDb API Key", "type": "string", "default": ""},
-    {"id": "channel_group_name", "label": "Channel Group Name Filter", "type": "string", "default": "movies"},
-    {"id": "channel_name_regex", "label": "Channel Name Regex", "type": "string", "default": ""},
-    {"id": "lookahead_hours", "label": "Lookahead Hours", "type": "number", "default": 12},
-    {"id": "lookback_hours", "label": "Lookback Hours", "type": "number", "default": 2},
-    {"id": "max_programs", "label": "Max Programs per Run", "type": "number", "default": 50},
-    {"id": "cache_enabled", "label": "Enable Metadata Cache", "type": "boolean", "default": true},
-    {"id": "cache_ttl_hours", "label": "Cache TTL (hours)", "type": "number", "default": 48},
-    {"id": "cache_max_entries", "label": "Cache Max Entries", "type": "number", "default": 5000},
-    {"id": "tmdb_api_call_limit", "label": "TMDB API Call Limit", "type": "number", "default": 0},
-    {"id": "omdb_api_call_limit", "label": "OMDb API Call Limit", "type": "number", "default": 1000},
-    {"id": "replace_title", "label": "Replace Program Title", "type": "boolean", "default": false},
-    {"id": "title_template", "label": "Title Template", "type": "string", "default": "{title} ({year})"},
-    {"id": "description_mode", "label": "Description Update Mode", "type": "select", "default": "append", "options": [{"value": "append", "label": "Append metadata block"}, {"value": "replace", "label": "Replace description"}]},
-    {"id": "description_template", "label": "Description Template", "type": "string", "default": "{title} ({year}) - {genres}\\nCast: {cast}\\nScores: {scores}\\n{overview}"},
-    {"id": "auto_enhance", "label": "Auto-Enhance on EPG Updates", "type": "boolean", "default": true},
-    {"id": "dry_run", "label": "Dry Run", "type": "boolean", "default": false}
+    {
+      "id": "provider",
+      "label": "Metadata Provider",
+      "type": "select",
+      "default": "tmdb",
+      "options": [
+        {
+          "value": "tmdb",
+          "label": "TMDB"
+        },
+        {
+          "value": "omdb",
+          "label": "OMDb / IMDB"
+        },
+        {
+          "value": "both",
+          "label": "TMDB + OMDb (fallback)"
+        }
+      ]
+    },
+    {
+      "id": "provider_priority",
+      "label": "Provider Priority (when using both)",
+      "type": "select",
+      "default": "tmdb_first",
+      "options": [
+        {
+          "value": "tmdb_first",
+          "label": "TMDB first"
+        },
+        {
+          "value": "omdb_first",
+          "label": "OMDb first"
+        }
+      ]
+    },
+    {
+      "id": "retry_count",
+      "label": "API Retry Count",
+      "type": "number",
+      "default": 2
+    },
+    {
+      "id": "retry_backoff_seconds",
+      "label": "Retry Backoff (seconds)",
+      "type": "number",
+      "default": 1
+    },
+    {
+      "id": "min_title_similarity",
+      "label": "Min Title Similarity (TMDB)",
+      "type": "number",
+      "default": 0.72
+    },
+    {
+      "id": "tmdb_api_key",
+      "label": "TMDB API Key",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "id": "omdb_api_key",
+      "label": "OMDb API Key",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "id": "channel_group_name",
+      "label": "Channel Group Name Filter",
+      "type": "string",
+      "default": "movies"
+    },
+    {
+      "id": "channel_name_regex",
+      "label": "Channel Name Regex",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "id": "lookahead_hours",
+      "label": "Lookahead Hours",
+      "type": "number",
+      "default": 12
+    },
+    {
+      "id": "lookback_hours",
+      "label": "Lookback Hours",
+      "type": "number",
+      "default": 2
+    },
+    {
+      "id": "max_programs",
+      "label": "Max Programs per Run",
+      "type": "number",
+      "default": 50
+    },
+    {
+      "id": "cache_enabled",
+      "label": "Enable Metadata Cache",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "id": "cache_ttl_hours",
+      "label": "Cache TTL (hours)",
+      "type": "number",
+      "default": 48
+    },
+    {
+      "id": "cache_max_entries",
+      "label": "Cache Max Entries",
+      "type": "number",
+      "default": 5000
+    },
+    {
+      "id": "tmdb_api_call_limit",
+      "label": "TMDB API Call Limit",
+      "type": "number",
+      "default": 0
+    },
+    {
+      "id": "omdb_api_call_limit",
+      "label": "OMDb API Call Limit",
+      "type": "number",
+      "default": 1000
+    },
+    {
+      "id": "replace_title",
+      "label": "Replace Program Title",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "id": "title_template",
+      "label": "Title Template",
+      "type": "string",
+      "default": "{title} ({year})"
+    },
+    {
+      "id": "description_mode",
+      "label": "Description Update Mode",
+      "type": "select",
+      "default": "append",
+      "options": [
+        {
+          "value": "append",
+          "label": "Append metadata block"
+        },
+        {
+          "value": "replace",
+          "label": "Replace description"
+        }
+      ]
+    },
+    {
+      "id": "description_template",
+      "label": "Description Template",
+      "type": "string",
+      "default": "{title} ({year}) - {genres}\\nCast: {cast}\\nScores: {scores}\\n{overview}"
+    },
+    {
+      "id": "auto_enhance",
+      "label": "Auto-Enhance on EPG Updates",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "id": "dry_run",
+      "label": "Dry Run",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "id": "force_reapply",
+      "label": "Force Reapply",
+      "type": "boolean",
+      "default": false
+    }
   ],
   "actions": [
-    {"id": "enhance", "label": "Enhance Programs", "description": "Fetch metadata and update program descriptions.", "button_label": "Enhance", "button_variant": "filled", "button_color": "blue"},
-    {"id": "check_progress", "label": "Check Progress", "description": "Show current run progress and remaining programs.", "button_label": "Check Progress", "button_variant": "outlined", "button_color": "gray"},
-    {"id": "last_result", "label": "View Last Run Result", "description": "Show summary and samples from the last preview/enhance run.", "button_label": "View Last Run", "button_variant": "outlined", "button_color": "gray"},
-    {"id": "clear_exports", "label": "Clear Exports", "description": "Delete EPG Enhancer export report files from /data/exports.", "button_label": "Clear Exports", "button_variant": "outlined", "button_color": "red"},
-    {"id": "clear_cache", "label": "Clear Cache", "description": "Clear EPG Enhancer cache/progress/last-result files.", "button_label": "Clear Cache", "button_variant": "outlined", "button_color": "red"}
+    {
+      "id": "enhance",
+      "label": "Enhance Programs",
+      "description": "Fetch metadata and update program descriptions.",
+      "button_label": "Enhance",
+      "button_variant": "filled",
+      "button_color": "blue"
+    },
+    {
+      "id": "check_progress",
+      "label": "Check Progress",
+      "description": "Show current run progress and remaining programs.",
+      "button_label": "Check Progress",
+      "button_variant": "outlined",
+      "button_color": "gray"
+    },
+    {
+      "id": "last_result",
+      "label": "View Last Run Result",
+      "description": "Show summary and samples from the last preview/enhance run.",
+      "button_label": "View Last Run",
+      "button_variant": "outlined",
+      "button_color": "gray"
+    },
+    {
+      "id": "clear_exports",
+      "label": "Clear Exports",
+      "description": "Delete EPG Enhancer export report files from /data/exports.",
+      "button_label": "Clear Exports",
+      "button_variant": "outlined",
+      "button_color": "red"
+    },
+    {
+      "id": "clear_cache",
+      "label": "Clear Cache",
+      "description": "Clear EPG Enhancer cache/progress/last-result files.",
+      "button_label": "Clear Cache",
+      "button_variant": "outlined",
+      "button_color": "red"
+    }
   ]
 }

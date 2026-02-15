@@ -7,6 +7,8 @@ import threading
 import requests
 import hashlib
 from datetime import timedelta
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from django.utils import timezone
 from django.conf import settings
 from django.db.models.signals import post_save
@@ -891,7 +893,7 @@ class Plugin:
                     params["first_air_date_year"] = year
 
             self._consume_api_call(call_counter)
-            search_resp = requests.get(
+            search_resp = self._get_requests_session().get(
                 f"https://api.themoviedb.org/3/search/{mode}", params=params, timeout=10
             )
             search_resp.raise_for_status()
@@ -915,7 +917,7 @@ class Plugin:
 
             tmdb_id = selected.get("id")
             self._consume_api_call(call_counter)
-            detail_resp = requests.get(
+            detail_resp = self._get_requests_session().get(
                 f"https://api.themoviedb.org/3/{mode}/{tmdb_id}",
                 params={"api_key": api_key, "append_to_response": "credits,external_ids"},
                 timeout=10,
@@ -973,7 +975,7 @@ class Plugin:
                 episode = (series_hints or {}).get("episode")
                 try:
                     self._consume_api_call(call_counter)
-                    ep_resp = requests.get(
+                    ep_resp = self._get_requests_session().get(
                         f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season}/episode/{episode}",
                         params={"api_key": api_key},
                         timeout=10,
@@ -1009,7 +1011,7 @@ class Plugin:
                 params["y"] = year
 
             self._consume_api_call(call_counter)
-            resp = requests.get("https://www.omdbapi.com/", params=params, timeout=10)
+            resp = self._get_requests_session().get("https://www.omdbapi.com/", params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             if data.get("Response") != "True":
@@ -1051,7 +1053,7 @@ class Plugin:
                 episode = (series_hints or {}).get("episode")
                 try:
                     self._consume_api_call(call_counter)
-                    ep_resp = requests.get(
+                    ep_resp = self._get_requests_session().get(
                         "https://www.omdbapi.com/",
                         params={
                             "apikey": api_key,
@@ -1089,6 +1091,23 @@ class Plugin:
                 attempt += 1
                 if backoff_seconds:
                     time.sleep(backoff_seconds)
+
+    def _get_requests_session(self):
+        session = getattr(self, "_requests_session", None)
+        if session:
+            return session
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods={"GET", "POST"},
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        self._requests_session = session
+        return session
 
     def _consume_api_call(self, call_counter):
         limit = call_counter.get("limit") or 0
@@ -1147,8 +1166,16 @@ class Plugin:
                 "updated_at": time.time(),
                 "entries": context["entries"],
             }
-            with open(context["path"], "w", encoding="utf-8") as handle:
+            tmp_path = context["path"] + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, separators=(",", ":"))
+            try:
+                os.replace(tmp_path, context["path"])
+            except Exception:
+                # Fallback for platforms that may not support os.replace semantics
+                if os.path.exists(context["path"]):
+                    os.remove(context["path"])
+                os.rename(tmp_path, context["path"])
             if logger:
                 logger.info("EPG Enhancer cache saved: entries=%s path=%s", len(context.get("entries", {})), context["path"])
         finally:

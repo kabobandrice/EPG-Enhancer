@@ -250,12 +250,12 @@ class Plugin:
         {
             "id": "clear_exports",
             "label": "Clear Exports",
-            "description": "Delete EPG Enhancer export report files from /data/exports.",
+            "description": "Delete EPG Enhancer export reports and reset progress/last-result state.",
         },
         {
             "id": "clear_cache",
             "label": "Clear Cache",
-            "description": "Clear EPG Enhancer cache/progress/last-result files.",
+            "description": "Clear only metadata cache files (keep progress/last-result state).",
         },
     ]
 
@@ -1251,34 +1251,53 @@ class Plugin:
     def _clear_exports(self, logger=None):
         exports_dir = self._get_exports_dir()
         deleted = 0
+        missing = 0
         errors = []
+
+        export_targets = []
         try:
             if os.path.isdir(exports_dir):
                 for name in os.listdir(exports_dir):
-                    if not name.startswith("epg_enhancer_") or not name.endswith(".json"):
-                        continue
-                    file_path = os.path.join(exports_dir, name)
-                    try:
-                        os.remove(file_path)
-                        deleted += 1
-                    except Exception as exc:
-                        errors.append(f"{name}: {exc}")
+                    if name.startswith("epg_enhancer_") and name.endswith(".json"):
+                        export_targets.append(os.path.join(exports_dir, name))
         except Exception as exc:
-            return {"status": "error", "message": f"Failed to clear exports: {exc}"}
+            return {"status": "error", "message": f"Failed to list exports: {exc}"}
 
-        message = f"Cleared {deleted} EPG Enhancer export file(s)."
+        state_targets = [
+            self._get_progress_path(),
+            self._get_last_result_path(),
+        ]
+
+        for path in export_targets + state_targets:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    deleted += 1
+                else:
+                    missing += 1
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
+
+        message = (
+            "Cleared export reports and run state files: "
+            f"deleted={deleted}, missing={missing}."
+        )
         if errors:
             message += f" {len(errors)} error(s): {'; '.join(errors[:3])}"
         if logger:
             logger.info(message)
-        return {"status": "ok", "message": message, "deleted": deleted, "errors": errors}
+        return {
+            "status": "ok" if not errors else "error",
+            "message": message,
+            "deleted": deleted,
+            "missing": missing,
+            "errors": errors,
+        }
 
     def _clear_cache(self, logger=None):
         targets = [
             self._get_cache_path(),
             self._get_cache_path() + ".lock",
-            self._get_progress_path(),
-            self._get_last_result_path(),
         ]
         deleted = 0
         missing = 0
@@ -1294,7 +1313,7 @@ class Plugin:
             except Exception as exc:
                 errors.append(f"{path}: {exc}")
 
-        message = f"Cleared cache/state files: deleted={deleted}, missing={missing}."
+        message = f"Cleared metadata cache files: deleted={deleted}, missing={missing}."
         if errors:
             message += f" {len(errors)} error(s): {'; '.join(errors[:2])}"
         if logger:

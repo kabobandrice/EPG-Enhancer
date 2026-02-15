@@ -212,7 +212,7 @@
     {
       "id": "clear_exports",
       "label": "Clear Exports",
-      "description": "Delete EPG Enhancer export report files from /data/exports.",
+      "description": "Delete EPG Enhancer export reports from /data/exports and reset progress/last-result state.",
       "button_label": "Clear Exports",
       "button_variant": "outlined",
       "button_color": "red"
@@ -220,7 +220,7 @@
     {
       "id": "clear_cache",
       "label": "Clear Cache",
-      "description": "Clear EPG Enhancer cache/progress/last-result files.",
+      "description": "Clear EPG Enhancer metadata cache.",
       "button_label": "Clear Cache",
       "button_variant": "outlined",
       "button_color": "red"

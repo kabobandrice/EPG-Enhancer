@@ -58,7 +58,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 
 ## Actions
 - **Preview Enhancement**: Lists programs that would be touched, with current and proposed title/description plus fetched metadata.
-- **Enhance Programs**: Fetches metadata and updates descriptions. Confirm modal is shown.
+- **Enhance Programs**: Queues enhancement in background by default and returns immediately.
 - **Check Progress**: Shows current run progress (attempted, matched, updated, skipped, remaining, API call counts).
 - **View Last Run Result**: Shows the last saved run summary (attempted, matched, updated, skipped, API call counts) and sample details.
 
@@ -94,7 +94,7 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 - **No metadata found**: check title quality, lower TMDB similarity threshold slightly, and verify API keys.
 - **Auto-enhance not triggering**: ensure `auto_enhance` is enabled, EPG source reaches `success`, and worker is running.
 - **Rate-limit errors / API call limit reached**: lower run size, increase schedule spacing, and tune TMDB/OMDb call limits.
-- **504 Gateway Time-out on run action**: web request timed out before plugin finished; reduce `Max Programs per Run` and use `Check Progress` / `View Last Run Result` to inspect run state and completion summary.
+- **504 Gateway Time-out on run action**: web request timed out before plugin finished; use `Enhance Programs`, reduce `Max Programs per Run`, and use `Check Progress` / `View Last Run Result` to inspect run state and completion summary.
 - **Plugin import issues**: plugin folder must be named exactly `epg_enhancer` under Dispatcharr `data/plugins/`.
 - **Update import conflicts**: if Dispatcharr says plugin already exists or actions fail on some workers, remove existing `epg_enhancer` plugin first, then re-import and restart app + workers.
 
@@ -102,6 +102,13 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 ## License
 This project currently has no license file.
 If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
+
+
+
+
+
+
+
 
 
 

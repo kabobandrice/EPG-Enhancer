@@ -252,6 +252,7 @@ class Plugin:
     def run(self, action: str, params: dict, context: dict):
         logger = context.get("logger") or LOGGER
         settings = context.get("settings", {})
+        params = params or {}
 
         if action not in {"preview", "enhance", "check_progress", "last_result"}:
             return {"status": "error", "message": f"Unknown action {action}"}
@@ -261,6 +262,10 @@ class Plugin:
 
         if action == "last_result":
             return self._load_last_run_result(logger=logger)
+
+        # Default enhance path is asynchronous from UI; workers pass _background=True.
+        if action == "enhance" and not params.get("_background"):
+            return self._start_background_enhance(logger=logger)
 
         provider = settings.get("provider", "tmdb")
         provider_priority = settings.get("provider_priority", "tmdb_first")
@@ -1098,6 +1103,55 @@ class Plugin:
                 "message": f"Failed to load last run result: {exc}",
             }
 
+    def _start_background_enhance(self, logger=None):
+        """Queue enhancement action in Celery and return immediately."""
+        from apps.plugins.models import Plugin as PluginModel
+        from apps.plugins.tasks import run_plugin_action
+
+        try:
+            plugin_instance = PluginModel.objects.get(name=self.name)
+        except PluginModel.DoesNotExist:
+            return {
+                "status": "error",
+                "message": "Plugin configuration not found; cannot queue background enhancement.",
+            }
+
+        queued_at = timezone.now().isoformat()
+        self._save_progress(
+            {
+                "status": "queued",
+                "running": False,
+                "action": "enhance",
+                "dry_run": False,
+                "total_programs": None,
+                "attempted": 0,
+                "updated": 0,
+                "preview_matches": 0,
+                "matched": 0,
+                "skipped": 0,
+                "remaining": None,
+                "api_calls": {"tmdb": 0, "omdb": 0},
+                "started_at": queued_at,
+                "finished_at": None,
+            },
+            logger=logger,
+        )
+
+        run_plugin_action.delay(
+            plugin_id=plugin_instance.id,
+            action="enhance",
+            params={"_background": True},
+            user_id=None,
+        )
+
+        return {
+            "status": "ok",
+            "queued": True,
+            "queued_at": queued_at,
+            "message": "Enhancement queued in background. Use 'Check Progress' to monitor run state.",
+        }
+
+
     def _acquire_cache_lock(self, lock_path, timeout_seconds=5):
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
@@ -1143,7 +1197,7 @@ def on_epg_source_updated(sender, instance, **kwargs):
                 run_plugin_action.delay(
                     plugin_id=plugin_instance.id,
                     action="enhance",
-                    params={},
+                    params={"_background": True},
                     user_id=None  # System-triggered
                 )
         except PluginModel.DoesNotExist:

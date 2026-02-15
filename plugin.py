@@ -1143,6 +1143,15 @@ class Plugin:
                 "message": f"Failed to load progress: {exc}",
             }
 
+    def _format_timestamp(self, value):
+        if not value:
+            return "unknown"
+        try:
+            dt = timezone.datetime.fromisoformat(value)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(value)
+
     def _save_last_run_result(self, summary, logger=None, report_file=None):
         path = self._get_last_result_path()
         try:
@@ -1150,6 +1159,7 @@ class Plugin:
                 "saved_at": timezone.now().isoformat(),
                 "summary": summary,
                 "report_file": report_file,
+                "report_latest_file": os.path.join(self._get_exports_dir(), "epg_enhancer_report_latest.json"),
             }
             self._write_json_file(path, payload, logger=logger)
         except Exception as exc:
@@ -1171,15 +1181,14 @@ class Plugin:
             api_calls = summary.get("api_calls", {})
             tmdb_calls = api_calls.get("tmdb", 0)
             omdb_calls = api_calls.get("omdb", 0)
-            saved_at = payload.get("saved_at", "")
-            report_file = payload.get("report_file")
+            saved_at = self._format_timestamp(payload.get("saved_at", ""))
+            report_file = payload.get("report_file") or payload.get("report_latest_file") or os.path.join(self._get_exports_dir(), "epg_enhancer_report_latest.json")
 
-            file_part = f" Report: {report_file}." if report_file else ""
             message = (
                 f"Last run ({'dry-run' if dry_run else 'enhance'}) attempted {attempted}, "
                 f"matched {matched}, updated {updated}, skipped {skipped}, "
-                f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved at {saved_at}."
-                f"{file_part}"
+                f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved: {saved_at}. "
+                f"Report: {report_file}."
             )
 
             return {

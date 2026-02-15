@@ -27,7 +27,7 @@ Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres
 - **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
 
 ## Actions
-- **Preview Enrichment**: Lists programs that would be touched and fetched metadata.
+- **Preview Enrichment**: Lists programs that would be touched, with current and proposed title/description plus fetched metadata.
 - **Enhance Programs**: Fetches metadata and updates descriptions. Confirm modal is shown.
 
 ## Behavior

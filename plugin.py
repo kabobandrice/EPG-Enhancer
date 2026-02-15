@@ -25,6 +25,7 @@ except Exception:
 LOGGER = logging.getLogger("plugins.epg_enhancer")
 _BACKGROUND_THREAD_LOCK = threading.Lock()
 _BACKGROUND_THREAD = None
+RUN_LOCK_STALE_SECONDS = 6 * 3600
 
 DEFAULT_TITLE_TEMPLATE = "{title} ({year})"
 
@@ -753,10 +754,10 @@ class Plugin:
         # Content-based caching: only skip if we've processed this exact program content before
         already_applied = False
         current_content_hash = self._get_program_content_hash(program_obj)
-        
+
         custom_props = program_obj.custom_properties or {}
         plugin_state = custom_props.get("epg_enhancer", {})
-        
+
         # Check if we've processed this exact program content before
         stored_content_hash = plugin_state.get("content_hash")
         if stored_content_hash == current_content_hash:
@@ -1511,6 +1512,19 @@ class Plugin:
                     "message": "Enhancement is already running in background.",
                 }
 
+            run_lock_path = self._get_run_lock_path()
+            run_lock_fd = self._acquire_run_lock(
+                lock_path=run_lock_path,
+                stale_seconds=RUN_LOCK_STALE_SECONDS,
+            )
+            if run_lock_fd is None:
+                return {
+                    "status": "ok",
+                    "queued": False,
+                    "already_running": True,
+                    "message": "Enhancement is already running in another worker.",
+                }
+
             def _thread_worker():
                 try:
                     try:
@@ -1537,6 +1551,7 @@ class Plugin:
                         logger=logger,
                     )
                 finally:
+                    self._release_run_lock(run_lock_path, run_lock_fd, logger=logger)
                     try:
                         from django.db import close_old_connections
                         close_old_connections()
@@ -1559,6 +1574,59 @@ class Plugin:
             "queued_at": queued_at,
             "message": f"{action_id.capitalize()} queued in background. Use 'Check Progress' to monitor run state.",
         }
+
+    def _get_run_lock_path(self):
+        base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
+        return os.path.join(str(base_dir), "epg_enhancer_run.lock")
+
+    def _acquire_run_lock(self, lock_path, stale_seconds=RUN_LOCK_STALE_SECONDS):
+        while True:
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                payload = {
+                    "pid": os.getpid(),
+                    "acquired_at": timezone.now().isoformat(),
+                }
+                os.write(fd, json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+                return fd
+            except FileExistsError:
+                if not self._run_lock_is_stale(lock_path, stale_seconds=stale_seconds):
+                    return None
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    return None
+
+    def _run_lock_is_stale(self, lock_path, stale_seconds):
+        if stale_seconds <= 0:
+            return False
+        try:
+            with open(lock_path, "r", encoding="utf-8") as handle:
+                raw = handle.read().strip()
+            if not raw:
+                return True
+            payload = json.loads(raw)
+            acquired_at = payload.get("acquired_at")
+            if not acquired_at:
+                return True
+            acquired_dt = timezone.datetime.fromisoformat(acquired_at)
+            age_seconds = (timezone.now() - acquired_dt).total_seconds()
+            return age_seconds > stale_seconds
+        except Exception:
+            return True
+
+    def _release_run_lock(self, lock_path, fd, logger=None):
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        try:
+            os.remove(lock_path)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer failed to release run lock: %s", exc)
 
 
     def _acquire_cache_lock(self, lock_path, timeout_seconds=5):

@@ -25,8 +25,46 @@ jobs:
           cp plugin.py release/epg_enhancer/
           cp helpers.py release/epg_enhancer/
           cp README.md release/epg_enhancer/
-          cd release
-          zip -r epg_enhancer.zip epg_enhancer
+          python - <<'PY'
+          import os
+          import zipfile
+
+          src_root = "release"
+          out_zip = "release/epg_enhancer.zip"
+
+          with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for root, _, files in os.walk(os.path.join(src_root, "epg_enhancer")):
+                  for name in files:
+                      full_path = os.path.join(root, name)
+                      arcname = os.path.relpath(full_path, src_root).replace("\\", "/")
+                      zf.write(full_path, arcname)
+          PY
+
+      - name: Validate zip structure
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile
+
+          expected = {
+              "epg_enhancer/__init__.py",
+              "epg_enhancer/plugin.py",
+              "epg_enhancer/helpers.py",
+              "epg_enhancer/README.md",
+          }
+          with zipfile.ZipFile("release/epg_enhancer.zip") as zf:
+              names = set(zf.namelist())
+
+          missing = sorted(expected - names)
+          invalid = sorted(n for n in names if not n.startswith("epg_enhancer/"))
+
+          if missing:
+              raise SystemExit(f"Missing zip entries: {missing}")
+          if invalid:
+              raise SystemExit(f"Invalid zip entries outside epg_enhancer/: {invalid}")
+
+          print("ZIP structure valid")
+          PY
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

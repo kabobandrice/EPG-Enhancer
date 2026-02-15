@@ -3,6 +3,7 @@ import re
 import os
 import json
 import time
+import threading
 import requests
 import hashlib
 from datetime import timedelta
@@ -20,6 +21,8 @@ except Exception:
     from helpers import render_template, render_title_template, title_similarity
 
 LOGGER = logging.getLogger("plugins.epg_enhancer")
+_BACKGROUND_THREAD_LOCK = threading.Lock()
+_BACKGROUND_THREAD = None
 
 DEFAULT_TITLE_TEMPLATE = "{title} ({year})"
 
@@ -271,7 +274,7 @@ class Plugin:
 
         # Enhance path is asynchronous from UI; workers pass _background=True.
         if action == "enhance" and not params.get("_background"):
-            return self._start_background_action(action_id=action, logger=logger)
+            return self._start_background_action(action_id=action, settings=settings, logger=logger)
 
         provider = settings.get("provider", "tmdb")
         provider_priority = settings.get("provider_priority", "tmdb_first")
@@ -1288,20 +1291,9 @@ class Plugin:
             logger.info(message)
         return {"status": "ok" if not errors else "error", "message": message, "deleted": deleted, "missing": missing, "errors": errors}
 
-    def _start_background_action(self, action_id, logger=None):
-        """Queue preview/enhance action in Celery and return immediately."""
+    def _start_background_action(self, action_id, settings=None, logger=None):
+        """Queue enhance action in background via Celery when available, else use a worker thread."""
         from apps.plugins.models import PluginConfig
-        from apps.plugins.tasks import run_plugin_action
-
-        plugin_instance = (
-            PluginConfig.objects.filter(key="epg_enhancer").first()
-            or PluginConfig.objects.filter(name=self.name).first()
-        )
-        if not plugin_instance:
-            return {
-                "status": "error",
-                "message": "Plugin configuration not found; cannot queue background action.",
-            }
 
         queued_at = timezone.now().isoformat()
         self._save_progress(
@@ -1324,18 +1316,103 @@ class Plugin:
             logger=logger,
         )
 
-        run_plugin_action.delay(
-            plugin_id=plugin_instance.id,
-            action=action_id,
-            params={"_background": True},
-            user_id=None,
-        )
+        try:
+            from apps.plugins.tasks import run_plugin_action  # type: ignore
+        except Exception:
+            run_plugin_action = None
+
+        if run_plugin_action is not None:
+            plugin_instance = (
+                PluginConfig.objects.filter(key="epg_enhancer").first()
+                or PluginConfig.objects.filter(name=self.name).first()
+            )
+            if not plugin_instance:
+                return {
+                    "status": "error",
+                    "message": "Plugin configuration not found; cannot queue background action.",
+                }
+
+            run_plugin_action.delay(
+                plugin_id=plugin_instance.id,
+                action=action_id,
+                params={"_background": True},
+                user_id=None,
+            )
+            return {
+                "status": "ok",
+                "queued": True,
+                "queued_at": queued_at,
+                "message": f"{action_id.capitalize()} queued in background. Use 'Check Progress' to monitor run state.",
+            }
+
+        plugin_settings = settings or {}
+        if not plugin_settings:
+            plugin_instance = (
+                PluginConfig.objects.filter(key="epg_enhancer").first()
+                or PluginConfig.objects.filter(name=self.name).first()
+            )
+            plugin_settings = (plugin_instance.settings or {}) if plugin_instance else {}
+
+        with _BACKGROUND_THREAD_LOCK:
+            global _BACKGROUND_THREAD
+            if _BACKGROUND_THREAD and _BACKGROUND_THREAD.is_alive():
+                return {
+                    "status": "ok",
+                    "queued": False,
+                    "already_running": True,
+                    "message": "Enhancement is already running in background.",
+                }
+
+            def _thread_worker():
+                try:
+                    try:
+                        from django.db import close_old_connections
+                        close_old_connections()
+                    except Exception:
+                        pass
+                    self.run(
+                        action_id,
+                        {"_background": True},
+                        {"settings": plugin_settings, "logger": logger or LOGGER, "actions": {}},
+                    )
+                except Exception as exc:
+                    (logger or LOGGER).exception("Background enhancement failed: %s", exc)
+                    self._save_progress(
+                        {
+                            "status": "error",
+                            "running": False,
+                            "action": action_id,
+                            "dry_run": bool(plugin_settings.get("dry_run", False)),
+                            "message": str(exc),
+                            "finished_at": timezone.now().isoformat(),
+                        },
+                        logger=logger,
+                    )
+                finally:
+                    try:
+                        from django.db import close_old_connections
+                        close_old_connections()
+                    except Exception:
+                        pass
+                    with _BACKGROUND_THREAD_LOCK:
+                        global _BACKGROUND_THREAD
+                        _BACKGROUND_THREAD = None
+
+            _BACKGROUND_THREAD = threading.Thread(
+                target=_thread_worker,
+                name=f"epg_enhancer_{action_id}",
+                daemon=True,
+            )
+            _BACKGROUND_THREAD.start()
 
         return {
             "status": "ok",
             "queued": True,
             "queued_at": queued_at,
-            "message": f"{action_id.capitalize()} queued in background. Use 'Check Progress' to monitor run state.",
+            "message": (
+                f"{action_id.capitalize()} queued in background (thread fallback). "
+                "Use 'Check Progress' to monitor run state."
+            ),
         }
 
 
@@ -1371,7 +1448,6 @@ def on_epg_source_updated(sender, instance, **kwargs):
     if instance.status == 'success' and instance.is_active and instance.source_type != 'dummy':
         # Import here to avoid circular imports
         from apps.plugins.models import PluginConfig
-        from apps.plugins.tasks import run_plugin_action
 
         try:
             # Get the plugin instance by key first, fallback by name.
@@ -1386,13 +1462,32 @@ def on_epg_source_updated(sender, instance, **kwargs):
 
             # Check if auto-enhance is enabled
             if plugin_settings.get("auto_enhance", True):
-                # Run the enhancement in the background
-                run_plugin_action.delay(
-                    plugin_id=plugin_instance.id,
-                    action="enhance",
-                    params={"_background": True},
-                    user_id=None  # System-triggered
-                )
+                # Preferred path: Celery plugin task API (newer Dispatcharr builds).
+                try:
+                    from apps.plugins.tasks import run_plugin_action  # type: ignore
+                except Exception:
+                    run_plugin_action = None
+
+                if run_plugin_action is not None:
+                    run_plugin_action.delay(
+                        plugin_id=plugin_instance.id,
+                        action="enhance",
+                        params={"_background": True},
+                        user_id=None  # System-triggered
+                    )
+                else:
+                    # Fallback path: ask loaded plugin instance to queue thread background run.
+                    from apps.plugins.loader import PluginManager
+
+                    loaded = PluginManager.get().get_plugin("epg_enhancer")
+                    if loaded and loaded.instance and hasattr(loaded.instance, "_start_background_action"):
+                        loaded.instance._start_background_action(
+                            action_id="enhance",
+                            settings=plugin_settings,
+                            logger=LOGGER,
+                        )
+                    else:
+                        LOGGER.warning("Auto-enhance skipped: epg_enhancer plugin not loaded.")
         except Exception as e:
             # Log error but do not break EPG processing.
             LOGGER.exception("Failed to trigger auto-enhancement for EPG %s: %s", instance.name, e)

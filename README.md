@@ -53,7 +53,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Replace Program Title**: Replace the program title using the title template.
 - **Title Template**: Template for titles. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre).
 - **Description Update Mode**: Append metadata block or replace the description entirely.
-- **Description Template**: Template for the metadata block. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre), `{genres}` (all genres), `{runtime}` (runtime), `{cast}` (top cast list), `{scores}` (ratings summary), `{overview}` (plot).
+- **Description Template**: Template for the metadata block. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre), `{genres}` (all genres), `{runtime}` (runtime), `{director}` (director), `{writers}` (writers), `{cast}` (top cast list), `{scores}` (ratings summary), `{overview}` (plot).
 - **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
 
 ## Actions

@@ -23,6 +23,8 @@ def build_template_context(metadata):
         "genre": genres_list[0] if genres_list else "",
         "genres": ", ".join(genres_list) if genres_list else "",
         "runtime": str(metadata.get("runtime") or ""),
+        "director": metadata.get("director") or "",
+        "writers": metadata.get("writers") or "",
         "cast": ", ".join(cast_list) if cast_list else "",
         "scores": " | ".join(rating_bits) if rating_bits else "",
         "overview": metadata.get("overview") or "",

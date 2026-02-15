@@ -196,7 +196,7 @@ class Plugin:
             "help_text": (
                 "Template for the metadata block. Tokens: {title} (movie title), "
                 "{year} (release year), {genre} (first genre), {genres} (all genres), "
-                "{runtime} (runtime), {cast} (top cast list), {scores} (ratings summary), "
+                "{runtime} (runtime), {director} (director), {writers} (writers), {cast} (top cast list), {scores} (ratings summary), "
                 "{overview} (plot summary)."
             ),
         },
@@ -853,6 +853,24 @@ class Plugin:
         credits = detail.get("credits", {})
         cast = [c["name"] for c in credits.get("cast", [])[:6]]
 
+        crew = credits.get("crew", [])
+        writer_jobs = {"Writer", "Screenplay", "Story", "Characters"}
+
+        directors = []
+        writers = []
+        for member in crew:
+            name = member.get("name")
+            job = member.get("job")
+            if not name or not job:
+                continue
+            if job == "Director" and name not in directors:
+                directors.append(name)
+            if job in writer_jobs and name not in writers:
+                writers.append(name)
+
+        director_value = ", ".join(directors[:3])
+        writers_value = ", ".join(writers[:6])
+
         ratings = {
             "tmdb": detail.get("vote_average"),
             "tmdb_count": detail.get("vote_count"),
@@ -872,6 +890,8 @@ class Plugin:
             "overview": detail.get("overview"),
             "cast": cast,
             "runtime": detail.get("runtime"),
+            "director": director_value,
+            "writers": writers_value,
             "ratings": ratings,
         }
 
@@ -900,6 +920,14 @@ class Plugin:
         if data.get("Genre"):
             genres = [g.strip() for g in data["Genre"].split(",")]
 
+        director_value = ""
+        if data.get("Director") and data.get("Director") != "N/A":
+            director_value = ", ".join([d.strip() for d in data["Director"].split(",") if d.strip()][:3])
+
+        writers_value = ""
+        if data.get("Writer") and data.get("Writer") != "N/A":
+            writers_value = ", ".join([w.strip() for w in data["Writer"].split(",") if w.strip()][:6])
+
         return {
             "provider": "omdb",
             "imdb_id": data.get("imdbID"),
@@ -909,6 +937,8 @@ class Plugin:
             "overview": data.get("Plot"),
             "cast": cast,
             "runtime": data.get("Runtime"),
+            "director": director_value,
+            "writers": writers_value,
             "ratings": ratings,
         }
 

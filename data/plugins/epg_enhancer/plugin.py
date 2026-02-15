@@ -2,7 +2,6 @@ import re
 import os
 import json
 import time
-import difflib
 import requests
 import hashlib
 from datetime import timedelta
@@ -13,6 +12,7 @@ from django.dispatch import receiver
 
 from apps.epg.models import ProgramData, EPGSource
 from apps.channels.models import Channel
+from .helpers import render_template, render_title_template, title_similarity
 
 
 class ApiCallLimitReached(Exception):
@@ -497,7 +497,7 @@ class Plugin:
                 "reason": error or "No metadata found",
             }
 
-        enriched_block = self._render_template(description_template, metadata)
+        enriched_block = render_template(description_template, metadata)
         if not enriched_block:
             return {
                 "status": "skipped",
@@ -506,6 +506,20 @@ class Plugin:
                 "metadata": metadata,
                 "reason": "Description template rendered empty",
             }
+
+        if description_mode not in {"append", "replace"}:
+            description_mode = "append"
+
+        if description_mode == "replace":
+            proposed_description = enriched_block
+        else:
+            proposed_description = enriched_block
+            if program_obj.description:
+                proposed_description = f"{program_obj.description.strip()}\n\n{enriched_block}"
+
+        proposed_title = None
+        if replace_title:
+            proposed_title = render_title_template(title_template, metadata) or None
 
         # Content-based caching: only skip if we've processed this exact program content before
         already_applied = False
@@ -520,31 +534,31 @@ class Plugin:
             already_applied = True
 
         if dry_run or already_applied:
-            return {
+            result = {
                 "status": "skipped" if already_applied else "preview",
                 "program": program_obj.title,
                 "channel": channels[0].name if channels else "",
                 "metadata": metadata,
                 "reason": "Already processed" if already_applied else "Preview only",
             }
+            if dry_run and not already_applied:
+                result.update(
+                    {
+                        "current_title": program_obj.title,
+                        "current_description": program_obj.description or "",
+                        "proposed_title": proposed_title,
+                        "proposed_description": proposed_description,
+                    }
+                )
+            return result
 
-        if description_mode not in {"append", "replace"}:
-            description_mode = "append"
-
-        if description_mode == "replace":
-            new_description = enriched_block
-        else:
-            new_description = enriched_block
-            if program_obj.description:
-                new_description = f"{program_obj.description.strip()}\n\n{enriched_block}"
+        new_description = proposed_description
 
         update_fields = ["description", "custom_properties"]
 
-        if replace_title:
-            new_title = self._render_title_template(title_template, metadata)
-            if new_title:
-                program_obj.title = new_title
-                update_fields.append("title")
+        if proposed_title:
+            program_obj.title = proposed_title
+            update_fields.append("title")
 
         stored_content_hash = self._get_content_hash(
             program_obj.title,
@@ -617,7 +631,7 @@ class Plugin:
             movie = None
             for candidate in results:
                 candidate_title = candidate.get("title") or ""
-                similarity = self._title_similarity(title, candidate_title)
+                similarity = title_similarity(title, candidate_title)
                 if similarity >= min_title_similarity:
                     movie = candidate
                     break
@@ -697,79 +711,6 @@ class Plugin:
             "runtime": data.get("Runtime"),
             "ratings": ratings,
         }
-
-    def _render_title_template(self, template, metadata):
-        context = self._build_template_context(metadata)
-        title_context = {
-            "title": context["title"],
-            "year": context["year"],
-            "genre": context["genre"],
-        }
-        return self._render_template_from_context(template, title_context)
-
-    def _render_template(self, template, metadata):
-        context = self._build_template_context(metadata)
-        return self._render_template_from_context(template, context)
-
-    def _build_template_context(self, metadata):
-        genres_list = metadata.get("genres") or []
-        cast_list = metadata.get("cast") or []
-        ratings = metadata.get("ratings") or {}
-
-        rating_bits = []
-        if ratings.get("tmdb"):
-            rating_bits.append(f"TMDB {ratings['tmdb']}")
-        if ratings.get("imdb"):
-            rating_bits.append(f"IMDB {ratings['imdb']}")
-        if ratings.get("rt"):
-            rating_bits.append(f"RT {ratings['rt']}")
-        if ratings.get("metacritic"):
-            rating_bits.append(f"Metacritic {ratings['metacritic']}")
-
-        return {
-            "title": metadata.get("title") or "",
-            "year": str(metadata.get("year") or ""),
-            "genre": genres_list[0] if genres_list else "",
-            "genres": ", ".join(genres_list) if genres_list else "",
-            "runtime": str(metadata.get("runtime") or ""),
-            "cast": ", ".join(cast_list) if cast_list else "",
-            "scores": " | ".join(rating_bits) if rating_bits else "",
-            "overview": metadata.get("overview") or "",
-        }
-
-    def _render_template_from_context(self, template, context):
-        rendered = template or ""
-        for key, value in context.items():
-            rendered = rendered.replace(f"{{{key}}}", value)
-        rendered = re.sub(r"\{[a-z_]+\}", "", rendered)
-
-        lines = []
-        for line in rendered.splitlines():
-            cleaned = re.sub(r"\(\s*\)", "", line)
-            cleaned = re.sub(r"\s*-\s*$", "", cleaned)
-            cleaned = re.sub(r"\s{2,}", " ", cleaned).rstrip()
-            stripped = cleaned.strip()
-            if not stripped:
-                continue
-            if re.match(r"^[A-Za-z ]+:\s*$", stripped):
-                continue
-            lines.append(cleaned)
-
-        return "\n".join(lines).strip()
-
-    def _title_similarity(self, left, right):
-        left_norm = self._normalize_title(left)
-        right_norm = self._normalize_title(right)
-        if not left_norm or not right_norm:
-            return 0.0
-        return difflib.SequenceMatcher(a=left_norm, b=right_norm).ratio()
-
-    def _normalize_title(self, title):
-        value = (title or "").lower()
-        value = re.sub(r"\(\d{4}\)", "", value)
-        value = re.sub(r"[^a-z0-9\s]", " ", value)
-        value = re.sub(r"\s+", " ", value)
-        return value.strip()
 
     def _call_with_retry(self, func, retries, backoff_seconds):
         attempt = 0
@@ -921,12 +862,12 @@ def on_epg_source_updated(sender, instance, **kwargs):
         # Import here to avoid circular imports
         from apps.plugins.models import Plugin as PluginModel
         from apps.plugins.tasks import run_plugin_action
-        
+
         try:
             # Get the plugin instance
             plugin_instance = PluginModel.objects.get(name="EPG Enhancer")
             plugin_settings = plugin_instance.settings or {}
-            
+
             # Check if auto-enhance is enabled
             if plugin_settings.get("auto_enhance", True):
                 # Run the enrichment in the background

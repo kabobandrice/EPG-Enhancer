@@ -263,9 +263,9 @@ class Plugin:
         if action == "last_result":
             return self._load_last_run_result(logger=logger)
 
-        # Default enhance path is asynchronous from UI; workers pass _background=True.
-        if action == "enhance" and not params.get("_background"):
-            return self._start_background_enhance(logger=logger)
+        # Default preview/enhance paths are asynchronous from UI; workers pass _background=True.
+        if action in {"preview", "enhance"} and not params.get("_background"):
+            return self._start_background_action(action_id=action, logger=logger)
 
         provider = settings.get("provider", "tmdb")
         provider_priority = settings.get("provider_priority", "tmdb_first")
@@ -1138,8 +1138,8 @@ class Plugin:
                 "message": f"Failed to load last run result: {exc}",
             }
 
-    def _start_background_enhance(self, logger=None):
-        """Queue enhancement action in Celery and return immediately."""
+    def _start_background_action(self, action_id, logger=None):
+        """Queue preview/enhance action in Celery and return immediately."""
         from apps.plugins.models import Plugin as PluginModel
         from apps.plugins.tasks import run_plugin_action
 
@@ -1148,7 +1148,7 @@ class Plugin:
         except PluginModel.DoesNotExist:
             return {
                 "status": "error",
-                "message": "Plugin configuration not found; cannot queue background enhancement.",
+                "message": "Plugin configuration not found; cannot queue background action.",
             }
 
         queued_at = timezone.now().isoformat()
@@ -1156,8 +1156,8 @@ class Plugin:
             {
                 "status": "queued",
                 "running": False,
-                "action": "enhance",
-                "dry_run": False,
+                "action": action_id,
+                "dry_run": action_id == "preview",
                 "total_programs": None,
                 "attempted": 0,
                 "updated": 0,
@@ -1174,7 +1174,7 @@ class Plugin:
 
         run_plugin_action.delay(
             plugin_id=plugin_instance.id,
-            action="enhance",
+            action=action_id,
             params={"_background": True},
             user_id=None,
         )
@@ -1183,7 +1183,7 @@ class Plugin:
             "status": "ok",
             "queued": True,
             "queued_at": queued_at,
-            "message": "Enhancement queued in background. Use 'Check Progress' to monitor run state.",
+            "message": f"{action_id.capitalize()} queued in background. Use 'Check Progress' to monitor run state.",
         }
 
 

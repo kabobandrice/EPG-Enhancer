@@ -18,6 +18,20 @@ Then enable the plugin in Dispatcharr `Settings -> Plugins`.
 ### Method 2: Download Release Asset
 Download `epg_enhancer.zip` from the Releases page, then import via `Settings -> Plugins -> Import`.
 
+## Updating
+### Method 1 (Git Clone)
+- `cd /path/to/dispatcharr/data/plugins/epg_enhancer`
+- `git pull`
+- Restart Dispatcharr app and worker processes.
+- Run **Preview Enrichment** after upgrades to verify template/settings behavior.
+
+### Method 2 (Release Asset)
+- Stop Dispatcharr, remove the existing `epg_enhancer` plugin folder (or delete the plugin from the Dispatcharr UI) 
+- Import/install the new version from releases.
+- Restart Dispatcharr app and worker processes.
+- Run **Preview Enrichment** before first enrich on each new version.
+- Existing EPG rows may be rebuilt on refresh; enhancements are reapplied by plugin runs.
+
 ## Settings
 - **Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `TMDB + OMDb (fallback)`.
 - **Provider Priority**: When using both, choose which provider to try first.
@@ -79,14 +93,9 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 - **Auto-enhance not triggering**: ensure `auto_enhance` is enabled, EPG source reaches `success`, and worker is running.
 - **Rate-limit errors / API call limit reached**: lower run size, increase schedule spacing, and tune TMDB/OMDb call limits.
 - **Plugin import issues**: plugin folder must be named exactly `epg_enhancer` under Dispatcharr `data/plugins/`.
+- **Update import conflicts**: if Dispatcharr says plugin already exists or actions fail on some workers, remove existing `epg_enhancer` plugin first, then re-import and restart app + workers.
 
-## Upgrade Notes
-- Replace the existing `epg_enhancer` plugin folder with the new version.
-- Restart Dispatcharr app and worker processes.
-- Run **Preview Enrichment** before first enrich on each new version.
-- Existing EPG rows may be rebuilt on refresh; enhancements are reapplied by plugin runs.
 
 ## License
 This project currently has no license file.
 If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
-

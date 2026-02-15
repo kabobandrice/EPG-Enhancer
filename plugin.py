@@ -21,6 +21,15 @@ except Exception:
 
 LOGGER = logging.getLogger("plugins.epg_enhancer")
 
+DEFAULT_TITLE_TEMPLATE = "{title} ({year})"
+
+DEFAULT_DESCRIPTION_TEMPLATE = (
+    "{title} ({year}) - {genres}\n"
+    "Cast: {cast}\n"
+    "Scores: {scores}\n"
+    "{overview}"
+)
+
 class ApiCallLimitReached(Exception):
     pass
 
@@ -177,7 +186,7 @@ class Plugin:
             "id": "title_template",
             "label": "Title Template",
             "type": "string",
-            "default": "{title} ({year})",
+            "default": DEFAULT_TITLE_TEMPLATE,
             "help_text": "Template used when replacing titles. Tokens: {title}, {year}, {genre}",
         },
         {
@@ -195,7 +204,7 @@ class Plugin:
             "id": "description_template",
             "label": "Description Template",
             "type": "string",
-            "default": "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}",
+            "default": DEFAULT_DESCRIPTION_TEMPLATE,
             "help_text": (
                 "Template for the metadata block. Tokens: {title} (movie title), "
                 "{year} (release year), {genre} (first genre), {genres} (all genres), "
@@ -273,11 +282,13 @@ class Plugin:
         cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
         replace_title = bool(settings.get("replace_title", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
-        title_template = settings.get("title_template", "{title} ({year})") or "{title} ({year})"
+        title_template = settings.get("title_template", DEFAULT_TITLE_TEMPLATE) or DEFAULT_TITLE_TEMPLATE
         description_template = settings.get(
             "description_template",
-            "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}",
-        ) or "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}"
+            DEFAULT_DESCRIPTION_TEMPLATE,
+        ) or DEFAULT_DESCRIPTION_TEMPLATE
+        # Normalize literal escapes entered in UI to real line breaks.
+        description_template = description_template.replace("\\r\\n", "\n").replace("\\n", "\n")
 
         logger.info(
             "EPG Enhancer run started: action=%s provider=%s priority=%s dry_run=%s lookback_h=%s lookahead_h=%s max_programs=%s cache=%s",

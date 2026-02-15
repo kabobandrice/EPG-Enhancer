@@ -121,14 +121,14 @@ class Plugin:
             "id": "lookback_hours",
             "label": "Lookback Hours",
             "type": "number",
-            "default": 2,
+            "default": 12,
             "help_text": "How far into the past to include programs (helps catch recent updates).",
         },
         {
             "id": "max_programs",
             "label": "Max Programs per Run",
             "type": "number",
-            "default": 50,
+            "default": 2000,
             "help_text": "Safety limit for each run to avoid heavy loads.",
         },
         {
@@ -290,8 +290,8 @@ class Plugin:
         channel_group_name = settings.get("channel_group_name", "").strip()
         channel_name_regex = settings.get("channel_name_regex", "").strip()
         lookahead_hours = int(settings.get("lookahead_hours", 12) or 12)
-        lookback_hours = int(settings.get("lookback_hours", 2) or 0)
-        max_programs = int(settings.get("max_programs", 50) or 50)
+        lookback_hours = int(settings.get("lookback_hours", 12) or 0)
+        max_programs = int(settings.get("max_programs", 2000) or 2000)
         dry_run = bool(settings.get("dry_run", False))
         force_reapply = bool(settings.get("force_reapply", False))
         retry_count = int(settings.get("retry_count", 2) or 0)

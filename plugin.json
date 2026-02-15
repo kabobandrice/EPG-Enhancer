@@ -93,13 +93,13 @@
       "id": "lookback_hours",
       "label": "Lookback Hours",
       "type": "number",
-      "default": 2
+      "default": 12
     },
     {
       "id": "max_programs",
       "label": "Max Programs per Run",
       "type": "number",
-      "default": 50
+      "default": 2000
     },
     {
       "id": "cache_enabled",

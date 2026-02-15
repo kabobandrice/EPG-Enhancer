@@ -9,7 +9,7 @@ The easiest and most reliable install path:
 
 ```bash
 cd /path/to/dispatcharr/data/plugins/
-git clone https://github.com/kabobandrice/EPG-Enhancer.git 
+git clone https://github.com/kabobandrice/EPG-Enhancer.git epg_enhancer
 docker compose restart dispatcharr
 ```
 
@@ -89,3 +89,4 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 ## License
 This project currently has no license file.
 If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
+

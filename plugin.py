@@ -62,6 +62,18 @@ class Plugin:
             "help_text": "Choose which provider to try first when using TMDB + OMDb.",
         },
         {
+            "id": "content_type_filter",
+            "label": "Program Type Filter",
+            "type": "select",
+            "default": "movies",
+            "options": [
+                {"value": "movies", "label": "Movies only"},
+                {"value": "series", "label": "Series only"},
+                {"value": "both", "label": "Movies + Series"},
+            ],
+            "help_text": "Choose whether to enhance movies, series, or both.",
+        },
+        {
             "id": "retry_count",
             "label": "API Retry Count",
             "type": "number",
@@ -200,7 +212,7 @@ class Plugin:
                 "Template for the metadata block. Tokens: {title} (movie title), "
                 "{year} (release year), {genre} (first genre), {genres} (all genres), "
                 "{runtime} (runtime), {director} (director), {writers} (writers), {cast} (top cast list), {scores} (ratings summary), "
-                "{overview} (plot summary)."
+                "{overview} (plot summary), {series_title} (series name), {episode_title} (episode title), {season_episode} (SxxEyy)."
             ),
         },
         {
@@ -285,6 +297,7 @@ class Plugin:
 
         provider = settings.get("provider", "tmdb")
         provider_priority = settings.get("provider_priority", "tmdb_first")
+        content_type_filter = (settings.get("content_type_filter", "movies") or "movies").lower()
         tmdb_api_key = settings.get("tmdb_api_key", "").strip()
         omdb_api_key = settings.get("omdb_api_key", "").strip()
         channel_group_name = settings.get("channel_group_name", "").strip()
@@ -437,6 +450,7 @@ class Plugin:
                     title_template=title_template,
                     description_template=description_template,
                     provider_priority=provider_priority,
+                    content_type_filter=content_type_filter,
                     retry_count=retry_count,
                     retry_backoff_seconds=retry_backoff_seconds,
                     call_counter=call_counter,
@@ -609,6 +623,7 @@ class Plugin:
         title_template,
         description_template,
         provider_priority,
+        content_type_filter,
         retry_count,
         retry_backoff_seconds,
         call_counter,
@@ -618,7 +633,7 @@ class Plugin:
     ):
         program_obj = program["program"]
         channels = program["channels"]
-        title, year = self._extract_title_and_year(program_obj.title, program_obj.sub_title, program_obj.description)
+        title, year, series_hints = self._extract_title_and_year(program_obj.title, program_obj.sub_title, program_obj.description)
 
         metadata = None
         error = None
@@ -665,13 +680,15 @@ class Plugin:
                             tmdb_api_key,
                             call_counter["tmdb"],
                             min_title_similarity,
+                            content_type_filter,
+                            series_hints,
                         ),
                         retries=retry_count,
                         backoff_seconds=retry_backoff_seconds,
                     )
                 else:
                     metadata = self._call_with_retry(
-                        lambda: self._lookup_omdb(title, year, omdb_api_key, call_counter["omdb"]),
+                        lambda: self._lookup_omdb(title, year, omdb_api_key, call_counter["omdb"], content_type_filter, series_hints),
                         retries=retry_count,
                         backoff_seconds=retry_backoff_seconds,
                     )
@@ -802,158 +819,262 @@ class Plugin:
         }
 
     def _extract_title_and_year(self, title, sub_title, description=None):
-        """Extract clean title and year from title, subtitle, and description."""
+        """Extract clean title, year, and optional episode hints from EPG fields."""
         raw_title = title or ""
+        raw_sub_title = sub_title or ""
+        raw_description = description or ""
 
-        # Check for year in title first
+        # Check for year in title first, then description.
         match = re.search(r"\((\d{4})\)", raw_title)
         year = int(match.group(1)) if match else None
-
-        # If no year in title, check description
-        if not year and description:
-            match = re.search(r"\((\d{4})\)", description)
+        if not year and raw_description:
+            match = re.search(r"\((\d{4})\)", raw_description)
             year = int(match.group(1)) if match else None
 
-        # Clean the title by removing year
-        clean_title = re.sub(r"\s*\(\d{4}\)\s*", "", raw_title).strip()
-        if not clean_title and sub_title:
-            clean_title = sub_title.strip()
-            
-        return clean_title, year
-
-    def _lookup_tmdb(self, title, year, api_key, call_counter, min_title_similarity):
-        params = {
-            "api_key": api_key,
-            "query": title,
-            "include_adult": False,
-        }
-        if year:
-            params["year"] = year
-
-        self._consume_api_call(call_counter)
-        search_resp = requests.get(
-            "https://api.themoviedb.org/3/search/movie", params=params, timeout=10
-        )
-        search_resp.raise_for_status()
-        results = search_resp.json().get("results", [])
-        if not results:
-            return None
-
-        results.sort(key=lambda result: result.get("popularity") or 0, reverse=True)
-        if min_title_similarity > 0:
-            movie = None
-            for candidate in results:
-                candidate_title = candidate.get("title") or ""
-                similarity = title_similarity(title, candidate_title)
-                if similarity >= min_title_similarity:
-                    movie = candidate
-                    break
-            if not movie:
-                return None
-        else:
-            # Prefer the most popular result to reduce mismatches on ambiguous titles.
-            movie = results[0]
-        tmdb_id = movie.get("id")
-        self._consume_api_call(call_counter)
-        detail_resp = requests.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-            params={"api_key": api_key, "append_to_response": "credits,release_dates,external_ids"},
-            timeout=10,
-        )
-        detail_resp.raise_for_status()
-        detail = detail_resp.json()
-
-        credits = detail.get("credits", {})
-        cast = [c["name"] for c in credits.get("cast", [])[:6]]
-
-        crew = credits.get("crew", [])
-        writer_jobs = {"Writer", "Screenplay", "Story", "Characters"}
-
-        directors = []
-        writers = []
-        for member in crew:
-            name = member.get("name")
-            job = member.get("job")
-            if not name or not job:
+        # Detect common episode markers (SxxEyy or 'Season x Episode y').
+        season = None
+        episode = None
+        for source in (raw_title, raw_sub_title, raw_description):
+            if not source:
                 continue
-            if job == "Director" and name not in directors:
-                directors.append(name)
-            if job in writer_jobs and name not in writers:
-                writers.append(name)
+            ep_match = re.search(r"(?i)S(\d{1,2})\s*E(\d{1,2})", source)
+            if not ep_match:
+                ep_match = re.search(r"(?i)Season\s*(\d{1,2})\s*Episode\s*(\d{1,2})", source)
+            if ep_match:
+                season = int(ep_match.group(1))
+                episode = int(ep_match.group(2))
+                break
 
-        director_value = ", ".join(directors[:3])
-        writers_value = ", ".join(writers[:6])
+        # Clean the title by removing year and episode markers.
+        clean_title = re.sub(r"\s*\(\d{4}\)\s*", "", raw_title)
+        clean_title = re.sub(r"(?i)S\d{1,2}\s*E\d{1,2}", "", clean_title)
+        clean_title = re.sub(r"(?i)Season\s*\d{1,2}\s*Episode\s*\d{1,2}", "", clean_title)
+        clean_title = re.sub(r"\s{2,}", " ", clean_title).strip(" -:	")
 
-        ratings = {
-            "tmdb": detail.get("vote_average"),
-            "tmdb_count": detail.get("vote_count"),
+        if not clean_title and raw_sub_title:
+            clean_title = raw_sub_title.strip()
+
+        episode_title = ""
+        if raw_sub_title and raw_sub_title.strip().lower() != (clean_title or "").lower():
+            episode_title = raw_sub_title.strip()
+
+        series_hints = {
+            "is_episode": bool(season and episode),
+            "season": season,
+            "episode": episode,
+            "episode_title": episode_title,
         }
 
-        imdb_id = detail.get("external_ids", {}).get("imdb_id")
-        if imdb_id:
-            ratings["imdb_id"] = imdb_id
+        return clean_title, year, series_hints
 
-        return {
-            "provider": "tmdb",
-            "tmdb_id": tmdb_id,
-            "imdb_id": imdb_id,
-            "title": detail.get("title") or title,
-            "year": (detail.get("release_date") or "")[:4],
-            "genres": [g["name"] for g in detail.get("genres", [])],
-            "overview": detail.get("overview"),
-            "cast": cast,
-            "runtime": detail.get("runtime"),
-            "director": director_value,
-            "writers": writers_value,
-            "ratings": ratings,
-        }
+    def _lookup_tmdb(self, title, year, api_key, call_counter, min_title_similarity, content_type_filter, series_hints):
+        filter_value = (content_type_filter or "movies").lower()
+        is_episode = bool((series_hints or {}).get("is_episode"))
 
-    def _lookup_omdb(self, title, year, api_key, call_counter):
-        params = {"apikey": api_key, "t": title, "type": "movie"}
-        if year:
-            params["y"] = year
-        self._consume_api_call(call_counter)
-        resp = requests.get("https://www.omdbapi.com/", params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("Response") != "True":
-            return None
+        if filter_value == "series":
+            search_modes = ["tv"]
+        elif filter_value == "both":
+            search_modes = ["tv", "movie"] if is_episode else ["movie", "tv"]
+        else:
+            search_modes = ["movie"]
 
-        ratings = {
-            "imdb": data.get("imdbRating"),
-            "rt": next((r["Value"] for r in data.get("Ratings", []) if r.get("Source") == "Rotten Tomatoes"), None),
-            "metacritic": data.get("Metascore"),
-        }
+        for mode in search_modes:
+            params = {
+                "api_key": api_key,
+                "query": title,
+                "include_adult": False,
+            }
+            if year:
+                if mode == "movie":
+                    params["year"] = year
+                else:
+                    params["first_air_date_year"] = year
 
-        cast = []
-        if data.get("Actors"):
-            cast = [actor.strip() for actor in data["Actors"].split(",")[:6]]
+            self._consume_api_call(call_counter)
+            search_resp = requests.get(
+                f"https://api.themoviedb.org/3/search/{mode}", params=params, timeout=10
+            )
+            search_resp.raise_for_status()
+            results = search_resp.json().get("results", [])
+            if not results:
+                continue
 
-        genres = []
-        if data.get("Genre"):
-            genres = [g.strip() for g in data["Genre"].split(",")]
+            results.sort(key=lambda result: result.get("popularity") or 0, reverse=True)
+            selected = None
+            if min_title_similarity > 0:
+                for candidate in results:
+                    candidate_title = candidate.get("title") or candidate.get("name") or ""
+                    similarity = title_similarity(title, candidate_title)
+                    if similarity >= min_title_similarity:
+                        selected = candidate
+                        break
+                if not selected:
+                    continue
+            else:
+                selected = results[0]
 
-        director_value = ""
-        if data.get("Director") and data.get("Director") != "N/A":
-            director_value = ", ".join([d.strip() for d in data["Director"].split(",") if d.strip()][:3])
+            tmdb_id = selected.get("id")
+            self._consume_api_call(call_counter)
+            detail_resp = requests.get(
+                f"https://api.themoviedb.org/3/{mode}/{tmdb_id}",
+                params={"api_key": api_key, "append_to_response": "credits,external_ids"},
+                timeout=10,
+            )
+            detail_resp.raise_for_status()
+            detail = detail_resp.json()
 
-        writers_value = ""
-        if data.get("Writer") and data.get("Writer") != "N/A":
-            writers_value = ", ".join([w.strip() for w in data["Writer"].split(",") if w.strip()][:6])
+            credits = detail.get("credits", {})
+            cast = [c.get("name") for c in credits.get("cast", [])[:6] if c.get("name")]
 
-        return {
-            "provider": "omdb",
-            "imdb_id": data.get("imdbID"),
-            "title": data.get("Title") or title,
-            "year": data.get("Year"),
-            "genres": genres,
-            "overview": data.get("Plot"),
-            "cast": cast,
-            "runtime": data.get("Runtime"),
-            "director": director_value,
-            "writers": writers_value,
-            "ratings": ratings,
-        }
+            crew = credits.get("crew", [])
+            writer_jobs = {"Writer", "Screenplay", "Story", "Characters"}
+            directors = []
+            writers = []
+            for member in crew:
+                name = member.get("name")
+                job = member.get("job")
+                if not name or not job:
+                    continue
+                if job == "Director" and name not in directors:
+                    directors.append(name)
+                if job in writer_jobs and name not in writers:
+                    writers.append(name)
+
+            ratings = {
+                "tmdb": detail.get("vote_average"),
+                "tmdb_count": detail.get("vote_count"),
+            }
+            imdb_id = detail.get("external_ids", {}).get("imdb_id")
+            if imdb_id:
+                ratings["imdb_id"] = imdb_id
+
+            metadata = {
+                "provider": "tmdb",
+                "content_type": "series" if mode == "tv" else "movie",
+                "tmdb_id": tmdb_id,
+                "imdb_id": imdb_id,
+                "title": (detail.get("name") if mode == "tv" else detail.get("title")) or title,
+                "series_title": (detail.get("name") if mode == "tv" else "") or "",
+                "episode_title": (series_hints or {}).get("episode_title") or "",
+                "season": (series_hints or {}).get("season"),
+                "episode": (series_hints or {}).get("episode"),
+                "year": ((detail.get("first_air_date") if mode == "tv" else detail.get("release_date")) or "")[:4],
+                "genres": [g.get("name") for g in detail.get("genres", []) if g.get("name")],
+                "overview": detail.get("overview"),
+                "cast": cast,
+                "runtime": detail.get("runtime"),
+                "director": ", ".join(directors[:3]),
+                "writers": ", ".join(writers[:6]),
+                "ratings": ratings,
+            }
+
+            if mode == "tv" and (series_hints or {}).get("season") and (series_hints or {}).get("episode"):
+                season = (series_hints or {}).get("season")
+                episode = (series_hints or {}).get("episode")
+                try:
+                    self._consume_api_call(call_counter)
+                    ep_resp = requests.get(
+                        f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season}/episode/{episode}",
+                        params={"api_key": api_key},
+                        timeout=10,
+                    )
+                    ep_resp.raise_for_status()
+                    ep_detail = ep_resp.json()
+                    metadata["episode_title"] = ep_detail.get("name") or metadata.get("episode_title") or ""
+                    metadata["overview"] = ep_detail.get("overview") or metadata.get("overview")
+                    if ep_detail.get("runtime"):
+                        metadata["runtime"] = ep_detail.get("runtime")
+                except Exception:
+                    # Episode lookup is optional; keep series-level metadata on failure.
+                    pass
+
+            return metadata
+
+        return None
+
+    def _lookup_omdb(self, title, year, api_key, call_counter, content_type_filter, series_hints):
+        filter_value = (content_type_filter or "movies").lower()
+        is_episode = bool((series_hints or {}).get("is_episode"))
+
+        if filter_value == "series":
+            search_types = ["series"]
+        elif filter_value == "both":
+            search_types = ["series", "movie"] if is_episode else ["movie", "series"]
+        else:
+            search_types = ["movie"]
+
+        for search_type in search_types:
+            params = {"apikey": api_key, "t": title, "type": search_type}
+            if year:
+                params["y"] = year
+
+            self._consume_api_call(call_counter)
+            resp = requests.get("https://www.omdbapi.com/", params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("Response") != "True":
+                continue
+
+            ratings = {
+                "imdb": data.get("imdbRating"),
+                "rt": next((r.get("Value") for r in data.get("Ratings", []) if r.get("Source") == "Rotten Tomatoes"), None),
+                "metacritic": data.get("Metascore"),
+            }
+
+            cast = [actor.strip() for actor in (data.get("Actors") or "").split(",") if actor.strip()][:6]
+            genres = [g.strip() for g in (data.get("Genre") or "").split(",") if g.strip()]
+            director_value = ", ".join([d.strip() for d in (data.get("Director") or "").split(",") if d.strip()][:3])
+            writers_value = ", ".join([w.strip() for w in (data.get("Writer") or "").split(",") if w.strip()][:6])
+
+            omdb_type = (data.get("Type") or search_type).lower()
+            metadata = {
+                "provider": "omdb",
+                "content_type": "series" if omdb_type == "series" else "movie",
+                "imdb_id": data.get("imdbID"),
+                "title": data.get("Title") or title,
+                "series_title": data.get("Title") if omdb_type == "series" else "",
+                "episode_title": (series_hints or {}).get("episode_title") or "",
+                "season": (series_hints or {}).get("season"),
+                "episode": (series_hints or {}).get("episode"),
+                "year": data.get("Year"),
+                "genres": genres,
+                "overview": data.get("Plot"),
+                "cast": cast,
+                "runtime": data.get("Runtime"),
+                "director": director_value if director_value != "N/A" else "",
+                "writers": writers_value if writers_value != "N/A" else "",
+                "ratings": ratings,
+            }
+
+            if omdb_type == "series" and data.get("imdbID") and (series_hints or {}).get("season") and (series_hints or {}).get("episode"):
+                season = (series_hints or {}).get("season")
+                episode = (series_hints or {}).get("episode")
+                try:
+                    self._consume_api_call(call_counter)
+                    ep_resp = requests.get(
+                        "https://www.omdbapi.com/",
+                        params={
+                            "apikey": api_key,
+                            "i": data.get("imdbID"),
+                            "Season": season,
+                            "Episode": episode,
+                        },
+                        timeout=10,
+                    )
+                    ep_resp.raise_for_status()
+                    ep_data = ep_resp.json()
+                    if ep_data.get("Response") == "True":
+                        metadata["episode_title"] = ep_data.get("Title") or metadata.get("episode_title") or ""
+                        if ep_data.get("Plot") and ep_data.get("Plot") != "N/A":
+                            metadata["overview"] = ep_data.get("Plot")
+                        if ep_data.get("Runtime") and ep_data.get("Runtime") != "N/A":
+                            metadata["runtime"] = ep_data.get("Runtime")
+                except Exception:
+                    pass
+
+            return metadata
+
+        return None
 
     def _call_with_retry(self, func, retries, backoff_seconds):
         attempt = 0

@@ -17,8 +17,20 @@ def build_template_context(metadata):
     if ratings.get("metacritic"):
         rating_bits.append(f"Metacritic {ratings['metacritic']}")
 
+    season = metadata.get("season")
+    episode = metadata.get("episode")
+    season_episode = ""
+    if season and episode:
+        season_episode = f"S{int(season):02d}E{int(episode):02d}"
+
     return {
         "title": metadata.get("title") or "",
+        "series_title": metadata.get("series_title") or "",
+        "episode_title": metadata.get("episode_title") or "",
+        "season": str(season or ""),
+        "episode": str(episode or ""),
+        "season_episode": season_episode,
+        "content_type": metadata.get("content_type") or "",
         "year": str(metadata.get("year") or ""),
         "genre": genres_list[0] if genres_list else "",
         "genres": ", ".join(genres_list) if genres_list else "",

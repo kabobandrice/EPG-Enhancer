@@ -42,6 +42,26 @@
       ]
     },
     {
+      "id": "content_type_filter",
+      "label": "Program Type Filter",
+      "type": "select",
+      "default": "movies",
+      "options": [
+        {
+          "value": "movies",
+          "label": "Movies only"
+        },
+        {
+          "value": "series",
+          "label": "Series only"
+        },
+        {
+          "value": "both",
+          "label": "Movies + Series"
+        }
+      ]
+    },
+    {
       "id": "retry_count",
       "label": "API Retry Count",
       "type": "number",
@@ -212,7 +232,7 @@
     {
       "id": "clear_exports",
       "label": "Clear Exports",
-      "description": "Delete EPG Enhancer export reports from /data/exports and reset progress/last-result state.",
+      "description": "Delete EPG Enhancer export reports and reset progress/last-result state.",
       "button_label": "Clear Exports",
       "button_variant": "outlined",
       "button_color": "red"
@@ -220,7 +240,7 @@
     {
       "id": "clear_cache",
       "label": "Clear Cache",
-      "description": "Clear EPG Enhancer metadata cache.",
+      "description": "Clear only metadata cache files (keep progress/last-result state).",
       "button_label": "Clear Cache",
       "button_variant": "outlined",
       "button_color": "red"

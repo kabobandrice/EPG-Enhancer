@@ -35,6 +35,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 ## Settings
 - **Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `TMDB + OMDb (fallback)`.
 - **Provider Priority**: When using both, choose which provider to try first.
+- **Program Type Filter**: `movies`, `series`, or `both` to control which content gets enhanced.
 - **TMDB API Key**: Required for TMDB provider. Get one at https://www.themoviedb.org/settings/api
 - **OMDb API Key**: Required for OMDb provider. Get one at https://www.omdbapi.com/apikey.aspx
 - **API Retry Count**: Retry failed API calls this many times.
@@ -42,8 +43,8 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Min Title Similarity (TMDB)**: Minimum title similarity to accept a TMDB match (0 = disabled).
 - **Channel Group Name Filter**: Only process channels in this group name (case-insensitive). Leave blank for all.
 - **Channel Name Regex**: Optional regex filter on channel names (e.g. `(?i)movie`).
-- **Lookahead/Lookback Hours**: Time window to enhance programs (default: +12h / -2h).
-- **Max Programs per Run**: Safety cap per invocation (default: 50).
+- **Lookahead/Lookback Hours**: Time window to enhance programs (default: +12h / -12h).
+- **Max Programs per Run**: Safety cap per invocation (default: 2000).
 - **TMDB API Call Limit**: Maximum TMDB API calls per run (0 = unlimited).
 - **OMDb API Call Limit**: Maximum OMDb API calls per run (0 = unlimited, default 1000).
 - **Enable Metadata Cache**: Reuse metadata across refreshes to reduce API calls.
@@ -53,7 +54,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Replace Program Title**: Replace the program title using the title template.
 - **Title Template**: Template for titles. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre).
 - **Description Update Mode**: Append metadata block or replace the description entirely.
-- **Description Template**: Template for the metadata block. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre), `{genres}` (all genres), `{runtime}` (runtime), `{director}` (director), `{writers}` (writers), `{cast}` (top cast list), `{scores}` (ratings summary), `{overview}` (plot).
+- **Description Template**: Template for the metadata block. Tokens: `{title}` (title), `{year}` (release/air year), `{genre}` (first genre), `{genres}` (all genres), `{runtime}` (runtime), `{director}` (director), `{writers}` (writers), `{cast}` (top cast list), `{scores}` (ratings summary), `{overview}` (plot), `{series_title}` (series title), `{episode_title}` (episode title), `{season}` (season number), `{episode}` (episode number), `{season_episode}` (SxxEyy), `{content_type}` (`movie` or `series`).
 - **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
 
 ## Actions
@@ -61,8 +62,8 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Check Progress**: Shows current run progress (attempted, matched, updated, skipped, remaining, API call counts).
 - **View Last Run Result**: Shows the last saved run summary and report file path for the most recent run.
 
-- **Clear Exports**: Deletes `epg_enhancer_*.json` report files from `/data/exports`.
-- **Clear Cache**: Clears plugin cache/progress/last-result state files.
+- **Clear Exports**: Deletes `epg_enhancer_*.json` report files from `/data/exports` and resets progress/last-result state.
+- **Clear Cache**: Clears metadata cache files only.
 
 ## Behavior
 - Queries `ProgramData` entries within the configured time window, limited to channels that match the group and/or regex filters.
@@ -70,7 +71,8 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Automatic Triggering**: Can automatically run when EPG sources are updated (when auto-enhance is enabled).
 - Updates title/description based on templates and records metadata in `custom_properties`.
 - Saves a full per-run report to `/data/exports/epg_enhancer_report_*.json` and updates `/data/exports/epg_enhancer_report_latest.json`.
-- Uses TMDB `search/movie` + `movie/{id}` (with credits/external IDs) or OMDb `t` lookup.
+- Uses TMDB `search/movie` / `search/tv` and details endpoints (with credits/external IDs) or OMDb `t` lookup with `type=movie|series`.
+- For series/episodes, the plugin detects season/episode hints (for example `S02E05`) and attempts episode-level enrichment when supported by the provider.
 
 ## Notes
 - For best matches, ensure EPG titles include the movie name (optionally with year). The plugin strips trailing `(YYYY)` when present.

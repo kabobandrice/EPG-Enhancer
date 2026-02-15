@@ -169,13 +169,6 @@ class Plugin:
             "help_text": "Maximum OMDb API calls per run (0 = unlimited).",
         },
         {
-            "id": "dry_run",
-            "label": "Dry Run",
-            "type": "boolean",
-            "default": False,
-            "help_text": "When enabled, only preview changes without saving.",
-        },
-        {
             "id": "replace_title",
             "label": "Replace Program Title",
             "type": "boolean",
@@ -219,14 +212,16 @@ class Plugin:
             "default": True,
             "help_text": "Automatically enhance programs when EPG data is updated.",
         },
+        {
+            "id": "dry_run",
+            "label": "Dry Run",
+            "type": "boolean",
+            "default": False,
+            "help_text": "When enabled, enhancement runs as preview (no database writes).",
+        },
     ]
 
     actions = [
-        {
-            "id": "preview",
-            "label": "Preview Enhancement",
-            "description": "Show which programs would be updated without saving.",
-        },
         {
             "id": "enhance",
             "label": "Enhance Programs",
@@ -264,7 +259,7 @@ class Plugin:
         settings = context.get("settings", {})
         params = params or {}
 
-        if action not in {"preview", "enhance", "check_progress", "last_result", "clear_exports", "clear_cache"}:
+        if action not in {"enhance", "check_progress", "last_result", "clear_exports", "clear_cache"}:
             return {"status": "error", "message": f"Unknown action {action}"}
 
         if action == "check_progress":
@@ -279,8 +274,8 @@ class Plugin:
         if action == "clear_cache":
             return self._clear_cache(logger=logger)
 
-        # Default preview/enhance paths are asynchronous from UI; workers pass _background=True.
-        if action in {"preview", "enhance"} and not params.get("_background"):
+        # Enhance path is asynchronous from UI; workers pass _background=True.
+        if action == "enhance" and not params.get("_background"):
             return self._start_background_action(action_id=action, logger=logger)
 
         provider = settings.get("provider", "tmdb")
@@ -316,7 +311,7 @@ class Plugin:
             action,
             provider,
             provider_priority,
-            dry_run or action == "preview",
+            dry_run,
             lookback_hours,
             lookahead_hours,
             max_programs,
@@ -355,7 +350,7 @@ class Plugin:
                 "status": "completed",
                 "running": False,
                 "action": action,
-                "dry_run": dry_run or action == "preview",
+                "dry_run": dry_run,
                 "total_programs": 0,
                 "attempted": 0,
                 "updated": 0,
@@ -375,7 +370,7 @@ class Plugin:
                 "preview_matches": 0,
                 "matched": 0,
                 "skipped": 0,
-                "dry_run": dry_run or action == "preview",
+                "dry_run": dry_run,
                 "api_calls": {"tmdb": 0, "omdb": 0},
                 "details": {"updated": [], "preview": [], "skipped": []},
             }
@@ -390,7 +385,7 @@ class Plugin:
         skipped = []
         attempted = 0
         total_programs = len(programs)
-        dry_mode = dry_run or action == "preview"
+        dry_mode = dry_run
 
         call_counter = {
             "tmdb": {"count": 0, "limit": tmdb_api_call_limit},
@@ -1181,7 +1176,7 @@ class Plugin:
 
             file_part = f" Report: {report_file}." if report_file else ""
             message = (
-                f"Last run ({'preview' if dry_run else 'enhance'}) attempted {attempted}, "
+                f"Last run ({'dry-run' if dry_run else 'enhance'}) attempted {attempted}, "
                 f"matched {matched}, updated {updated}, skipped {skipped}, "
                 f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved at {saved_at}."
                 f"{file_part}"
@@ -1278,7 +1273,7 @@ class Plugin:
                 "status": "queued",
                 "running": False,
                 "action": action_id,
-                "dry_run": action_id == "preview",
+                "dry_run": False,
                 "total_programs": None,
                 "attempted": 0,
                 "updated": 0,

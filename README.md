@@ -23,13 +23,13 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - `cd /path/to/dispatcharr/data/plugins/epg_enhancer`
 - `git pull`
 - Restart Dispatcharr app and worker processes.
-- Run **Preview Enhancement** after upgrades to verify template/settings behavior.
+- Run **Enhance Programs** with `Dry Run: true` after upgrades to verify template/settings behavior.
 
 ### Method 2 (Release Asset)
 - Stop Dispatcharr, remove the existing `epg_enhancer` plugin folder (or delete the plugin from the Dispatcharr UI) 
 - Import/install the new version from releases.
 - Restart Dispatcharr app and worker processes.
-- Run **Preview Enhancement** before first enhance on each new version.
+- Run **Enhance Programs** with `Dry Run: true` before first enhance on each new version.
 - Existing EPG rows may be rebuilt on refresh; enhancements are reapplied by plugin runs.
 
 ## Settings
@@ -57,7 +57,6 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
 
 ## Actions
-- **Preview Enhancement**: Lists programs that would be touched, with current and proposed title/description plus fetched metadata.
 - **Enhance Programs**: Queues enhancement in background by default and returns immediately.
 - **Check Progress**: Shows current run progress (attempted, matched, updated, skipped, remaining, API call counts).
 - **View Last Run Result**: Shows the last saved run summary and report file path for the most recent run.
@@ -91,7 +90,7 @@ Use this baseline for a safe first run:
 - Channel Group Name Filter: `movies` (or your target group)
 - Min Title Similarity (TMDB): `0.72`
 
-After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
+After dry-run looks good, set `Dry Run` to `false` and run **Enhance Programs** again.
 
 ## Troubleshooting
 - **No programs matched filters**: widen lookahead/lookback window, clear channel filters, or increase max programs.
@@ -106,3 +105,4 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 ## License
 This project currently has no license file.
 If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
+

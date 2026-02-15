@@ -215,11 +215,11 @@ class Plugin:
     actions = [
         {
             "id": "preview",
-            "label": "Preview Enrichment",
+            "label": "Preview Enhancement",
             "description": "Show which programs would be updated without saving.",
         },
         {
-            "id": "enrich",
+            "id": "enhance",
             "label": "Enhance Programs",
             "description": "Fetch metadata and update program descriptions.",
             "confirm": {
@@ -228,14 +228,30 @@ class Plugin:
                 "message": "This will fetch metadata and update program descriptions.",
             },
         },
+        {
+            "id": "check_progress",
+            "label": "Check Progress",
+            "description": "Show current run progress and remaining programs.",
+        },
+        {
+            "id": "last_result",
+            "label": "View Last Run Result",
+            "description": "Show summary and samples from the last preview/enhance run.",
+        },
     ]
 
     def run(self, action: str, params: dict, context: dict):
         logger = context.get("logger") or LOGGER
         settings = context.get("settings", {})
 
-        if action not in {"preview", "enrich"}:
+        if action not in {"preview", "enhance", "check_progress", "last_result"}:
             return {"status": "error", "message": f"Unknown action {action}"}
+
+        if action == "check_progress":
+            return self._load_progress(logger=logger)
+
+        if action == "last_result":
+            return self._load_last_run_result(logger=logger)
 
         provider = settings.get("provider", "tmdb")
         provider_priority = settings.get("provider_priority", "tmdb_first")
@@ -303,12 +319,45 @@ class Plugin:
 
         if not programs:
             logger.info("EPG Enhancer run found no programs matching filters.")
+            empty_progress = {
+                "status": "completed",
+                "running": False,
+                "action": action,
+                "dry_run": dry_run or action == "preview",
+                "total_programs": 0,
+                "attempted": 0,
+                "updated": 0,
+                "preview_matches": 0,
+                "matched": 0,
+                "skipped": 0,
+                "remaining": 0,
+                "api_calls": {"tmdb": 0, "omdb": 0},
+                "started_at": timezone.now().isoformat(),
+                "finished_at": timezone.now().isoformat(),
+            }
+            self._save_progress(empty_progress, logger=logger)
+            self._save_last_run_result({
+                "status": "ok",
+                "attempted": 0,
+                "updated": 0,
+                "preview_matches": 0,
+                "matched": 0,
+                "skipped": 0,
+                "dry_run": dry_run or action == "preview",
+                "api_calls": {"tmdb": 0, "omdb": 0},
+                "details": {"updated": [], "preview": [], "skipped": []},
+            }, logger=logger)
             return {"status": "ok", "message": "No programs matched filters."}
 
         logger.info("EPG Enhancer run matched %s program(s) for processing.", len(programs))
 
         updated = []
+        preview = []
         skipped = []
+        attempted = 0
+        total_programs = len(programs)
+        dry_mode = dry_run or action == "preview"
+
         call_counter = {
             "tmdb": {"count": 0, "limit": tmdb_api_call_limit},
             "omdb": {"count": 0, "limit": omdb_api_call_limit},
@@ -320,56 +369,136 @@ class Plugin:
             logger=logger,
         )
 
-        for program in programs:
-            result = self._process_program(
-                program=program,
-                provider=provider,
-                tmdb_api_key=tmdb_api_key,
-                omdb_api_key=omdb_api_key,
-                dry_run=dry_run or action == "preview",
-                replace_title=replace_title,
-                description_mode=description_mode,
-                title_template=title_template,
-                description_template=description_template,
-                provider_priority=provider_priority,
-                retry_count=retry_count,
-                retry_backoff_seconds=retry_backoff_seconds,
-                call_counter=call_counter,
-                cache_context=cache_context,
-                min_title_similarity=min_title_similarity,
-                logger=logger,
-            )
-            if result.get("stop"):
-                skipped.append(result)
-                break
-            if result["status"] == "updated":
-                updated.append(result)
-            else:
-                skipped.append(result)
-
-        if cache_context.get("dirty"):
-            self._save_cache_context(cache_context, logger=logger)
-
-        summary = {
-            "status": "ok",
-            "updated": len(updated),
-            "skipped": len(skipped),
-            "dry_run": dry_run or action == "preview",
-            "details": {
-                "updated": updated[:10],  # cap detail noise
-                "skipped": skipped[:10],
-            },
+        progress = {
+            "status": "running",
+            "running": True,
+            "action": action,
+            "dry_run": dry_mode,
+            "total_programs": total_programs,
+            "attempted": 0,
+            "updated": 0,
+            "preview_matches": 0,
+            "matched": 0,
+            "skipped": 0,
+            "remaining": total_programs,
+            "api_calls": {"tmdb": 0, "omdb": 0},
+            "started_at": timezone.now().isoformat(),
+            "finished_at": None,
         }
+        self._save_progress(progress, logger=logger)
 
-        if logger:
-            logger.info(
-                "EPG Enhancer finished: updated=%s skipped=%s dry_run=%s",
-                len(updated),
-                len(skipped),
-                summary["dry_run"],
+        try:
+            for program in programs:
+                attempted += 1
+                result = self._process_program(
+                    program=program,
+                    provider=provider,
+                    tmdb_api_key=tmdb_api_key,
+                    omdb_api_key=omdb_api_key,
+                    dry_run=dry_mode,
+                    replace_title=replace_title,
+                    description_mode=description_mode,
+                    title_template=title_template,
+                    description_template=description_template,
+                    provider_priority=provider_priority,
+                    retry_count=retry_count,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    call_counter=call_counter,
+                    cache_context=cache_context,
+                    min_title_similarity=min_title_similarity,
+                    logger=logger,
+                )
+                if result.get("stop"):
+                    skipped.append(result)
+                else:
+                    status_value = result.get("status")
+                    if status_value == "updated":
+                        updated.append(result)
+                    elif status_value == "preview":
+                        preview.append(result)
+                    else:
+                        skipped.append(result)
+
+                progress.update(
+                    {
+                        "attempted": attempted,
+                        "updated": len(updated),
+                        "preview_matches": len(preview),
+                        "matched": len(updated) + len(preview),
+                        "skipped": len(skipped),
+                        "remaining": max(total_programs - attempted, 0),
+                        "api_calls": {
+                            "tmdb": call_counter["tmdb"].get("count", 0),
+                            "omdb": call_counter["omdb"].get("count", 0),
+                        },
+                    }
+                )
+                self._save_progress(progress, logger=logger)
+
+                if result.get("stop"):
+                    break
+
+            if cache_context.get("dirty"):
+                self._save_cache_context(cache_context, logger=logger)
+
+            summary = {
+                "status": "ok",
+                "attempted": attempted,
+                "updated": len(updated),
+                "preview_matches": len(preview),
+                "matched": len(updated) + len(preview),
+                "skipped": len(skipped),
+                "dry_run": dry_mode,
+                "api_calls": {
+                    "tmdb": call_counter["tmdb"].get("count", 0),
+                    "omdb": call_counter["omdb"].get("count", 0),
+                },
+                "details": {
+                    "updated": updated[:10],
+                    "preview": preview[:10],
+                    "skipped": skipped[:10],
+                },
+            }
+
+            progress.update(
+                {
+                    "status": "completed",
+                    "running": False,
+                    "finished_at": timezone.now().isoformat(),
+                    "remaining": max(total_programs - attempted, 0),
+                }
             )
+            self._save_progress(progress, logger=logger)
+            self._save_last_run_result(summary, logger=logger)
 
-        return summary
+            if logger:
+                logger.info(
+                    "EPG Enhancer finished: attempted=%s matched=%s updated=%s preview=%s skipped=%s dry_run=%s",
+                    attempted,
+                    summary["matched"],
+                    len(updated),
+                    len(preview),
+                    len(skipped),
+                    dry_mode,
+                )
+
+            return summary
+        except Exception as exc:
+            progress.update(
+                {
+                    "status": "failed",
+                    "running": False,
+                    "error": str(exc),
+                    "finished_at": timezone.now().isoformat(),
+                    "remaining": max(total_programs - attempted, 0),
+                    "api_calls": {
+                        "tmdb": call_counter["tmdb"].get("count", 0),
+                        "omdb": call_counter["omdb"].get("count", 0),
+                    },
+                }
+            )
+            self._save_progress(progress, logger=logger)
+            raise
 
     def _find_programs(
         self,
@@ -533,8 +662,8 @@ class Plugin:
                 "reason": error or "No metadata found",
             }
 
-        enriched_block = render_template(description_template, metadata)
-        if not enriched_block:
+        enhanced_block = render_template(description_template, metadata)
+        if not enhanced_block:
             return {
                 "status": "skipped",
                 "program": program_obj.title,
@@ -547,11 +676,11 @@ class Plugin:
             description_mode = "append"
 
         if description_mode == "replace":
-            proposed_description = enriched_block
+            proposed_description = enhanced_block
         else:
-            proposed_description = enriched_block
+            proposed_description = enhanced_block
             if program_obj.description:
-                proposed_description = f"{program_obj.description.strip()}\n\n{enriched_block}"
+                proposed_description = f"{program_obj.description.strip()}\n\n{enhanced_block}"
 
         proposed_title = None
         if replace_title:
@@ -874,6 +1003,90 @@ class Plugin:
         base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
         return os.path.join(str(base_dir), "epg_enhancer_cache.json")
 
+    def _get_progress_path(self):
+        base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
+        return os.path.join(str(base_dir), "epg_enhancer_progress.json")
+
+    def _get_last_result_path(self):
+        base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
+        return os.path.join(str(base_dir), "epg_enhancer_last_result.json")
+
+    def _save_progress(self, progress, logger=None):
+        path = self._get_progress_path()
+        try:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(progress, handle, separators=(",", ":"))
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer failed to save progress: %s", exc)
+
+    def _load_progress(self, logger=None):
+        path = self._get_progress_path()
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                progress = json.load(handle)
+            return {
+                "status": "ok",
+                "message": "Loaded current progress.",
+                "progress": progress,
+            }
+        except FileNotFoundError:
+            return {
+                "status": "ok",
+                "message": "No active or previous progress state found.",
+                "progress": None,
+            }
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer failed to load progress: %s", exc)
+            return {
+                "status": "error",
+                "message": f"Failed to load progress: {exc}",
+            }
+
+    def _save_last_run_result(self, summary, logger=None):
+        path = self._get_last_result_path()
+        try:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            payload = {
+                "saved_at": timezone.now().isoformat(),
+                "summary": summary,
+            }
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"))
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer failed to save last-run result: %s", exc)
+
+    def _load_last_run_result(self, logger=None):
+        path = self._get_last_result_path()
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            return {
+                "status": "ok",
+                "message": "Loaded last run result.",
+                "last_run": payload,
+            }
+        except FileNotFoundError:
+            return {
+                "status": "ok",
+                "message": "No previous run result saved yet.",
+                "last_run": None,
+            }
+        except Exception as exc:
+            if logger:
+                logger.warning("EPG Enhancer failed to load last-run result: %s", exc)
+            return {
+                "status": "error",
+                "message": f"Failed to load last run result: {exc}",
+            }
+
     def _acquire_cache_lock(self, lock_path, timeout_seconds=5):
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
@@ -915,10 +1128,10 @@ def on_epg_source_updated(sender, instance, **kwargs):
 
             # Check if auto-enhance is enabled
             if plugin_settings.get("auto_enhance", True):
-                # Run the enrichment in the background
+                # Run the enhancement in the background
                 run_plugin_action.delay(
                     plugin_id=plugin_instance.id,
-                    action="enrich",
+                    action="enhance",
                     params={},
                     user_id=None  # System-triggered
                 )

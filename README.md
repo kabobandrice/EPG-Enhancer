@@ -1,6 +1,6 @@
 # EPG Enhancer
 
-Dispatcharr plugin that enriches EPG programs with metadata (title, year, genres, cast, scores) from TMDB or OMDb/IMDB and appends it to the program description.
+Dispatcharr plugin that enhances EPG programs with metadata (title, year, genres, cast, scores) from TMDB or OMDb/IMDB and appends it to the program description.
 
 
 ## Installation Methods
@@ -23,13 +23,13 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - `cd /path/to/dispatcharr/data/plugins/epg_enhancer`
 - `git pull`
 - Restart Dispatcharr app and worker processes.
-- Run **Preview Enrichment** after upgrades to verify template/settings behavior.
+- Run **Preview Enhancement** after upgrades to verify template/settings behavior.
 
 ### Method 2 (Release Asset)
 - Stop Dispatcharr, remove the existing `epg_enhancer` plugin folder (or delete the plugin from the Dispatcharr UI) 
 - Import/install the new version from releases.
 - Restart Dispatcharr app and worker processes.
-- Run **Preview Enrichment** before first enrich on each new version.
+- Run **Preview Enhancement** before first enhance on each new version.
 - Existing EPG rows may be rebuilt on refresh; enhancements are reapplied by plugin runs.
 
 ## Settings
@@ -42,7 +42,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Min Title Similarity (TMDB)**: Minimum title similarity to accept a TMDB match (0 = disabled).
 - **Channel Group Name Filter**: Only process channels in this group name (case-insensitive). Leave blank for all.
 - **Channel Name Regex**: Optional regex filter on channel names (e.g. `(?i)movie`).
-- **Lookahead/Lookback Hours**: Time window to enrich programs (default: +12h / -2h).
+- **Lookahead/Lookback Hours**: Time window to enhance programs (default: +12h / -2h).
 - **Max Programs per Run**: Safety cap per invocation (default: 50).
 - **TMDB API Call Limit**: Maximum TMDB API calls per run (0 = unlimited).
 - **OMDb API Call Limit**: Maximum OMDb API calls per run (0 = unlimited, default 1000).
@@ -57,8 +57,10 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
 
 ## Actions
-- **Preview Enrichment**: Lists programs that would be touched, with current and proposed title/description plus fetched metadata.
+- **Preview Enhancement**: Lists programs that would be touched, with current and proposed title/description plus fetched metadata.
 - **Enhance Programs**: Fetches metadata and updates descriptions. Confirm modal is shown.
+- **Check Progress**: Shows current run progress (attempted, matched, updated, skipped, remaining, API call counts).
+- **View Last Run Result**: Shows the last saved run summary (attempted, matched, updated, skipped, API call counts) and sample details.
 
 ## Behavior
 - Queries `ProgramData` entries within the configured time window, limited to channels that match the group and/or regex filters.
@@ -92,6 +94,7 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 - **No metadata found**: check title quality, lower TMDB similarity threshold slightly, and verify API keys.
 - **Auto-enhance not triggering**: ensure `auto_enhance` is enabled, EPG source reaches `success`, and worker is running.
 - **Rate-limit errors / API call limit reached**: lower run size, increase schedule spacing, and tune TMDB/OMDb call limits.
+- **504 Gateway Time-out on run action**: web request timed out before plugin finished; reduce `Max Programs per Run` and use `Check Progress` / `View Last Run Result` to inspect run state and completion summary.
 - **Plugin import issues**: plugin folder must be named exactly `epg_enhancer` under Dispatcharr `data/plugins/`.
 - **Update import conflicts**: if Dispatcharr says plugin already exists or actions fail on some workers, remove existing `epg_enhancer` plugin first, then re-import and restart app + workers.
 
@@ -99,3 +102,8 @@ After preview looks good, set Dry Run to `false` and run **Enhance Programs**.
 ## License
 This project currently has no license file.
 If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
+
+
+
+
+

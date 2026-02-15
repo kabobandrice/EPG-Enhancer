@@ -1044,9 +1044,29 @@ class Plugin:
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 progress = json.load(handle)
+
+            state = progress.get("status", "unknown")
+            attempted = progress.get("attempted", 0)
+            total = progress.get("total_programs")
+            remaining = progress.get("remaining")
+            matched = progress.get("matched", 0)
+            updated = progress.get("updated", 0)
+            skipped = progress.get("skipped", 0)
+            api_calls = progress.get("api_calls", {})
+            tmdb_calls = api_calls.get("tmdb", 0)
+            omdb_calls = api_calls.get("omdb", 0)
+
+            total_str = "?" if total is None else str(total)
+            remaining_str = "?" if remaining is None else str(remaining)
+            message = (
+                f"Progress [{state}] {attempted}/{total_str} attempted, "
+                f"remaining {remaining_str}, matched {matched}, updated {updated}, "
+                f"skipped {skipped}, API TMDB/OMDb {tmdb_calls}/{omdb_calls}."
+            )
+
             return {
                 "status": "ok",
-                "message": "Loaded current progress.",
+                "message": message,
                 "progress": progress,
             }
         except FileNotFoundError:
@@ -1084,9 +1104,24 @@ class Plugin:
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
+
+            summary = payload.get("summary", {})
+            attempted = summary.get("attempted", 0)
+            matched = summary.get("matched", 0)
+            updated = summary.get("updated", 0)
+            skipped = summary.get("skipped", 0)
+            dry_run = summary.get("dry_run", False)
+            saved_at = payload.get("saved_at", "")
+
+            message = (
+                f"Last run ({'preview' if dry_run else 'enhance'}) attempted {attempted}, "
+                f"matched {matched}, updated {updated}, skipped {skipped}. "
+                f"Saved at {saved_at}."
+            )
+
             return {
                 "status": "ok",
-                "message": "Loaded last run result.",
+                "message": message,
                 "last_run": payload,
             }
         except FileNotFoundError:

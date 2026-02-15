@@ -1,3 +1,4 @@
+import logging
 import re
 import os
 import json
@@ -12,8 +13,13 @@ from django.dispatch import receiver
 
 from apps.epg.models import ProgramData, EPGSource
 from apps.channels.models import Channel
-from helpers import render_template, render_title_template, title_similarity
 
+try:
+    from .helpers import render_template, render_title_template, title_similarity
+except Exception:
+    from helpers import render_template, render_title_template, title_similarity
+
+LOGGER = logging.getLogger("plugins.epg_enhancer")
 
 class ApiCallLimitReached(Exception):
     pass
@@ -225,7 +231,7 @@ class Plugin:
     ]
 
     def run(self, action: str, params: dict, context: dict):
-        logger = context.get("logger")
+        logger = context.get("logger") or LOGGER
         settings = context.get("settings", {})
 
         if action not in {"preview", "enrich"}:
@@ -257,6 +263,18 @@ class Plugin:
             "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}",
         ) or "{title} ({year}) - {genres}\nCast: {cast}\nScores: {scores}\n{overview}"
 
+        logger.info(
+            "EPG Enhancer run started: action=%s provider=%s priority=%s dry_run=%s lookback_h=%s lookahead_h=%s max_programs=%s cache=%s",
+            action,
+            provider,
+            provider_priority,
+            dry_run or action == "preview",
+            lookback_hours,
+            lookahead_hours,
+            max_programs,
+            cache_enabled,
+        )
+
         if provider == "tmdb" and not tmdb_api_key:
             return {"status": "error", "message": "TMDB API key is required when provider is TMDB."}
         if provider == "omdb" and not omdb_api_key:
@@ -284,7 +302,10 @@ class Plugin:
         )
 
         if not programs:
+            logger.info("EPG Enhancer run found no programs matching filters.")
             return {"status": "ok", "message": "No programs matched filters."}
+
+        logger.info("EPG Enhancer run matched %s program(s) for processing.", len(programs))
 
         updated = []
         skipped = []
@@ -434,6 +455,13 @@ class Plugin:
             if cached:
                 metadata = cached.get("metadata")
                 used_provider = cached.get("provider")
+                logger.info(
+                    "EPG Enhancer cache hit: program=%s provider=%s",
+                    program_obj.title,
+                    used_provider or "unknown",
+                )
+            else:
+                logger.info("EPG Enhancer cache miss: program=%s", program_obj.title)
 
         provider_order = []
         if provider == "both":
@@ -451,6 +479,8 @@ class Plugin:
                 continue
             if chosen_provider == "omdb" and not omdb_api_key:
                 continue
+
+            logger.info("EPG Enhancer lookup attempt: program=%s provider=%s year=%s", program_obj.title, chosen_provider, year)
 
             try:
                 if chosen_provider == "tmdb":
@@ -472,6 +502,7 @@ class Plugin:
                         backoff_seconds=retry_backoff_seconds,
                     )
             except ApiCallLimitReached:
+                logger.warning("EPG Enhancer API call limit reached: provider=%s program=%s", chosen_provider, program_obj.title)
                 return {
                     "status": "skipped",
                     "program": program_obj.title,
@@ -482,14 +513,19 @@ class Plugin:
             except Exception as exc:
                 error = str(exc)
                 metadata = None
+                logger.warning("EPG Enhancer lookup failed: provider=%s program=%s error=%s", chosen_provider, program_obj.title, exc)
 
             if metadata:
                 used_provider = chosen_provider
+                logger.info("EPG Enhancer metadata match: program=%s provider=%s", program_obj.title, used_provider)
+                if provider == "both" and len(provider_order) > 1 and used_provider == provider_order[1]:
+                    logger.info("EPG Enhancer fallback provider used: program=%s primary=%s fallback=%s", program_obj.title, provider_order[0], provider_order[1])
                 if cache_context.get("enabled"):
                     self._cache_set(cache_context, cache_key, metadata, used_provider)
                 break
 
         if not metadata:
+            logger.info("EPG Enhancer no metadata match: program=%s reason=%s", program_obj.title, error or "No metadata found")
             return {
                 "status": "skipped",
                 "program": program_obj.title,
@@ -534,6 +570,8 @@ class Plugin:
             already_applied = True
 
         if dry_run or already_applied:
+            if already_applied:
+                logger.info("EPG Enhancer skipped already-processed content: program=%s", program_obj.title)
             result = {
                 "status": "skipped" if already_applied else "preview",
                 "program": program_obj.title,
@@ -580,6 +618,7 @@ class Plugin:
         program_obj.description = new_description
         program_obj.custom_properties = custom_props
         program_obj.save(update_fields=update_fields)
+        logger.info("EPG Enhancer updated program: program=%s provider=%s mode=%s title_replaced=%s", program_obj.title, used_provider or provider, description_mode, bool(proposed_title))
 
         return {
             "status": "updated",
@@ -602,7 +641,7 @@ class Plugin:
             year = int(match.group(1)) if match else None
 
         # Clean the title by removing year
-        clean_title = re.sub(r"\s*\(\d{4})\)\s*", "", raw_title).strip()
+        clean_title = re.sub(r"\s*\(\d{4}\)\s*", "", raw_title).strip()
         if not clean_title and sub_title:
             clean_title = sub_title.strip()
             
@@ -742,6 +781,8 @@ class Plugin:
             "dirty": False,
         }
         if not enabled:
+            if logger:
+                logger.info("EPG Enhancer cache disabled for this run.")
             return context
 
         try:
@@ -756,6 +797,8 @@ class Plugin:
             return context
 
         self._prune_cache(context)
+        if logger:
+            logger.info("EPG Enhancer cache loaded: entries=%s path=%s", len(context.get("entries", {})), context["path"])
         return context
 
     def _save_cache_context(self, context, logger=None):
@@ -781,6 +824,8 @@ class Plugin:
             }
             with open(context["path"], "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, separators=(",", ":"))
+            if logger:
+                logger.info("EPG Enhancer cache saved: entries=%s path=%s", len(context.get("entries", {})), context["path"])
         finally:
             self._release_cache_lock(lock_path, lock_fd)
 
@@ -881,7 +926,7 @@ def on_epg_source_updated(sender, instance, **kwargs):
             # Plugin not installed, skip
             pass
         except Exception as e:
-            # Log error but don't break EPG processing
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to trigger auto-enhancement for EPG {instance.name}: {e}")
+            # Log error but do not break EPG processing.
+            LOGGER.exception("Failed to trigger auto-enhancement for EPG %s: %s", instance.name, e)
+
+

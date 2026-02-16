@@ -1024,6 +1024,31 @@ class Plugin:
                 except Exception:
                     # Episode lookup is optional; keep series-level metadata on failure.
                     pass
+            elif mode == "tv" and (series_hints or {}).get("episode_title"):
+                # Fallback: when subtitle has an episode title but no S/E number,
+                # scan recent seasons and match by title similarity.
+                try:
+                    matched_episode = self._find_tmdb_episode_by_title(
+                        tmdb_id=tmdb_id,
+                        api_key=api_key,
+                        episode_title=(series_hints or {}).get("episode_title"),
+                        call_counter=call_counter,
+                    )
+                    if matched_episode:
+                        metadata["season"] = matched_episode.get("season")
+                        metadata["episode"] = matched_episode.get("episode")
+                        metadata["episode_title"] = (
+                            matched_episode.get("episode_title")
+                            or metadata.get("episode_title")
+                            or ""
+                        )
+                        if matched_episode.get("overview"):
+                            metadata["overview"] = matched_episode.get("overview")
+                        if matched_episode.get("runtime"):
+                            metadata["runtime"] = matched_episode.get("runtime")
+                except Exception:
+                    # Fallback matching is optional; keep series-level metadata.
+                    pass
 
             return metadata
 
@@ -1108,6 +1133,30 @@ class Plugin:
                             metadata["runtime"] = ep_data.get("Runtime")
                 except Exception:
                     pass
+            elif omdb_type == "series" and data.get("imdbID") and (series_hints or {}).get("episode_title"):
+                # Fallback: attempt to resolve episode from subtitle title when S/E is missing.
+                try:
+                    matched_episode = self._find_omdb_episode_by_title(
+                        series_imdb_id=data.get("imdbID"),
+                        api_key=api_key,
+                        episode_title=(series_hints or {}).get("episode_title"),
+                        total_seasons=data.get("totalSeasons"),
+                        call_counter=call_counter,
+                    )
+                    if matched_episode:
+                        metadata["season"] = matched_episode.get("season")
+                        metadata["episode"] = matched_episode.get("episode")
+                        metadata["episode_title"] = (
+                            matched_episode.get("episode_title")
+                            or metadata.get("episode_title")
+                            or ""
+                        )
+                        if matched_episode.get("overview"):
+                            metadata["overview"] = matched_episode.get("overview")
+                        if matched_episode.get("runtime"):
+                            metadata["runtime"] = matched_episode.get("runtime")
+                except Exception:
+                    pass
 
             return metadata
 
@@ -1126,6 +1175,141 @@ class Plugin:
                 attempt += 1
                 if backoff_seconds:
                     time.sleep(backoff_seconds)
+
+    def _find_tmdb_episode_by_title(self, tmdb_id, api_key, episode_title, call_counter):
+        candidate_title = (episode_title or "").strip()
+        if not candidate_title:
+            return None
+
+        # Keep this conservative to avoid excessive API usage.
+        max_seasons_to_scan = 2
+        min_similarity = 0.90
+
+        self._consume_api_call(call_counter)
+        detail_resp = self._get_requests_session().get(
+            f"https://api.themoviedb.org/3/tv/{tmdb_id}",
+            params={"api_key": api_key},
+            timeout=10,
+        )
+        detail_resp.raise_for_status()
+        detail = detail_resp.json()
+
+        seasons = detail.get("seasons") or []
+        season_numbers = [
+            int(season.get("season_number"))
+            for season in seasons
+            if season.get("season_number") not in (None, "") and int(season.get("season_number", 0)) > 0
+        ]
+        season_numbers = sorted(set(season_numbers), reverse=True)[:max_seasons_to_scan]
+        if not season_numbers:
+            return None
+
+        best = None
+        best_similarity = 0.0
+
+        for season_number in season_numbers:
+            self._consume_api_call(call_counter)
+            season_resp = self._get_requests_session().get(
+                f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}",
+                params={"api_key": api_key},
+                timeout=10,
+            )
+            season_resp.raise_for_status()
+            season_data = season_resp.json()
+
+            for ep in season_data.get("episodes", []) or []:
+                ep_name = (ep.get("name") or "").strip()
+                if not ep_name:
+                    continue
+                similarity = title_similarity(candidate_title, ep_name)
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best = {
+                        "season": season_number,
+                        "episode": ep.get("episode_number"),
+                        "episode_title": ep_name,
+                        "overview": ep.get("overview"),
+                        "runtime": ep.get("runtime"),
+                    }
+
+        if best and best_similarity >= min_similarity:
+            return best
+        return None
+
+    def _find_omdb_episode_by_title(self, series_imdb_id, api_key, episode_title, total_seasons, call_counter):
+        candidate_title = (episode_title or "").strip()
+        if not candidate_title:
+            return None
+
+        max_seasons_to_scan = 2
+        min_similarity = 0.90
+
+        try:
+            total = int(total_seasons or 0)
+        except Exception:
+            total = 0
+
+        if total > 0:
+            season_numbers = list(range(max(total - max_seasons_to_scan + 1, 1), total + 1))
+        else:
+            season_numbers = [1, 2]
+
+        best = None
+        best_similarity = 0.0
+
+        for season_number in season_numbers:
+            self._consume_api_call(call_counter)
+            season_resp = self._get_requests_session().get(
+                "https://www.omdbapi.com/",
+                params={
+                    "apikey": api_key,
+                    "i": series_imdb_id,
+                    "Season": season_number,
+                },
+                timeout=10,
+            )
+            season_resp.raise_for_status()
+            season_data = season_resp.json()
+            if season_data.get("Response") != "True":
+                continue
+
+            for ep in season_data.get("Episodes", []) or []:
+                ep_name = (ep.get("Title") or "").strip()
+                if not ep_name:
+                    continue
+                similarity = title_similarity(candidate_title, ep_name)
+                if similarity > best_similarity:
+                    ep_number = ep.get("Episode")
+                    try:
+                        ep_number = int(ep_number)
+                    except Exception:
+                        ep_number = None
+                    best_similarity = similarity
+                    best = {
+                        "season": season_number,
+                        "episode": ep_number,
+                        "episode_title": ep_name,
+                        "episode_imdb_id": ep.get("imdbID"),
+                    }
+
+        if not best or best_similarity < min_similarity:
+            return None
+
+        ep_imdb_id = best.get("episode_imdb_id")
+        if ep_imdb_id:
+            self._consume_api_call(call_counter)
+            ep_resp = self._get_requests_session().get(
+                "https://www.omdbapi.com/",
+                params={"apikey": api_key, "i": ep_imdb_id, "plot": "full"},
+                timeout=10,
+            )
+            ep_resp.raise_for_status()
+            ep_data = ep_resp.json()
+            if ep_data.get("Response") == "True":
+                best["overview"] = ep_data.get("Plot")
+                best["runtime"] = ep_data.get("Runtime")
+
+        return best
 
     def _get_requests_session(self):
         session = getattr(self, "_requests_session", None)

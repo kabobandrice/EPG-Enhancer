@@ -1125,7 +1125,34 @@ class Plugin:
                         selected = candidate
                         break
                 if not selected:
-                    continue
+                    # Strict numeric fallback: if title contains digits and TMDB returns
+                    # exactly one result, accept that single result before provider fallback.
+                    if re.search(r"\d", title or "") and len(results) == 1:
+                        candidate = results[0]
+                        candidate_title = candidate.get("title") or candidate.get("name") or ""
+
+                        query_words = set(re.findall(r"[a-z]{2,}", (title or "").lower()))
+                        candidate_words = set(re.findall(r"[a-z]{2,}", candidate_title.lower()))
+                        stop_words = {
+                            "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "at", "by"
+                        }
+                        meaningful_query_words = {
+                            word for word in query_words if word not in stop_words
+                        }
+
+                        # Guardrail: only allow fallback when there is explicit overlap,
+                        # or when query has a meaningful non-numeric word and similarity
+                        # is at least 0.333333 (e.g., "513 Degrees" -> "Five Thirteen").
+                        overlap = bool(meaningful_query_words.intersection(candidate_words))
+                        relaxed_similarity = title_similarity(title, candidate_title)
+                        if overlap or (
+                            meaningful_query_words and relaxed_similarity >= 0.333333
+                        ):
+                            selected = candidate
+                        else:
+                            continue
+                    else:
+                        continue
             else:
                 selected = results[0]
 
@@ -2394,4 +2421,3 @@ def on_epg_source_updated(sender, instance, **kwargs):
         except Exception as e:
             # Log error but do not break EPG processing.
             LOGGER.exception("Failed to trigger auto-enhancement for EPG %s: %s", instance.name, e)
-

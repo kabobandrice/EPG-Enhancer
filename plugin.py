@@ -168,6 +168,13 @@ class Plugin:
             "help_text": "Maximum cached items to keep (0 = unlimited).",
         },
         {
+            "id": "exports_dir",
+            "label": "Exports Directory",
+            "type": "string",
+            "default": "",
+            "help_text": "Optional absolute path for report exports. Leave blank to use the app data exports folder.",
+        },
+        {
             "id": "tmdb_api_call_limit",
             "label": "TMDB API Call Limit",
             "type": "number",
@@ -325,6 +332,7 @@ class Plugin:
         cache_enabled = bool(settings.get("cache_enabled", True))
         cache_ttl_hours = float(settings.get("cache_ttl_hours", 48) or 0)
         cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
+        exports_dir_override = (settings.get("exports_dir", "") or "").strip()
         replace_title = bool(settings.get("replace_title", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
         title_template = settings.get("title_template", DEFAULT_TITLE_TEMPLATE) or DEFAULT_TITLE_TEMPLATE
@@ -403,8 +411,21 @@ class Plugin:
                 "api_calls": {"tmdb": 0, "omdb": 0},
                 "details": {"updated": [], "preview": [], "skipped": []},
             }
-            report_file = self._save_full_report(action=action, summary=empty_summary, updated=[], preview=[], skipped=[], logger=logger)
-            self._save_last_run_result(empty_summary, logger=logger, report_file=report_file)
+            report_file = self._save_full_report(
+                action=action,
+                summary=empty_summary,
+                updated=[],
+                preview=[],
+                skipped=[],
+                exports_dir=exports_dir_override,
+                logger=logger,
+            )
+            self._save_last_run_result(
+                empty_summary,
+                logger=logger,
+                report_file=report_file,
+                exports_dir=exports_dir_override,
+            )
             return {"status": "ok", "message": "No programs matched filters."}
 
         logger.info("EPG Enhancer run matched %s program(s) for processing.", len(programs))
@@ -535,9 +556,15 @@ class Plugin:
                 updated=updated,
                 preview=preview,
                 skipped=skipped,
+                exports_dir=exports_dir_override,
                 logger=logger,
             )
-            self._save_last_run_result(summary, logger=logger, report_file=report_file)
+            self._save_last_run_result(
+                summary,
+                logger=logger,
+                report_file=report_file,
+                exports_dir=exports_dir_override,
+            )
 
             if logger:
                 logger.info(
@@ -1242,8 +1269,11 @@ class Plugin:
         base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
         return os.path.join(str(base_dir), "epg_enhancer_last_result.json")
 
-    def _get_exports_dir(self):
-        return os.path.join(os.sep, "data", "exports")
+    def _get_exports_dir(self, override_path=None):
+        if override_path:
+            return override_path
+        base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(settings, "BASE_DIR", "")
+        return os.path.join(str(base_dir), "exports")
 
     def _write_json_file(self, path, payload, logger=None):
         parent = os.path.dirname(path)
@@ -1252,11 +1282,11 @@ class Plugin:
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, separators=(",", ":"))
 
-    def _save_full_report(self, action, summary, updated, preview, skipped, logger=None):
+    def _save_full_report(self, action, summary, updated, preview, skipped, exports_dir=None, logger=None):
         timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
-        exports_dir = self._get_exports_dir()
-        report_file = os.path.join(exports_dir, f"epg_enhancer_report_{timestamp}.json")
-        latest_file = os.path.join(exports_dir, "epg_enhancer_report_latest.json")
+        output_dir = self._get_exports_dir(override_path=exports_dir)
+        report_file = os.path.join(output_dir, f"epg_enhancer_report_{timestamp}.json")
+        latest_file = os.path.join(output_dir, "epg_enhancer_report_latest.json")
 
         payload = {
             "generated_at": timezone.now().isoformat(),
@@ -1346,14 +1376,15 @@ class Plugin:
         except Exception:
             return str(value)
 
-    def _save_last_run_result(self, summary, logger=None, report_file=None):
+    def _save_last_run_result(self, summary, logger=None, report_file=None, exports_dir=None):
         path = self._get_last_result_path()
         try:
+            output_dir = self._get_exports_dir(override_path=exports_dir)
             payload = {
                 "saved_at": timezone.now().isoformat(),
                 "summary": summary,
                 "report_file": report_file,
-                "report_latest_file": os.path.join(self._get_exports_dir(), "epg_enhancer_report_latest.json"),
+                "report_latest_file": os.path.join(output_dir, "epg_enhancer_report_latest.json"),
             }
             self._write_json_file(path, payload, logger=logger)
         except Exception as exc:
@@ -1376,7 +1407,11 @@ class Plugin:
             tmdb_calls = api_calls.get("tmdb", 0)
             omdb_calls = api_calls.get("omdb", 0)
             saved_at = self._format_timestamp(payload.get("saved_at", ""))
-            report_file = payload.get("report_file") or payload.get("report_latest_file") or os.path.join(self._get_exports_dir(), "epg_enhancer_report_latest.json")
+            report_file = (
+                payload.get("report_file")
+                or payload.get("report_latest_file")
+                or os.path.join(self._get_exports_dir(), "epg_enhancer_report_latest.json")
+            )
 
             message = (
                 f"Last run ({'dry-run' if dry_run else 'enhance'}) attempted {attempted}, "

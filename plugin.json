@@ -1,6 +1,6 @@
 {
   "name": "EPG Enhancer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Enhance EPG entries with metadata from TMDB or OMDb/IMDB.",
   "author": "kabobandrice",
   "help_url": "https://github.com/kabobandrice/EPG-Enhancer",
@@ -138,6 +138,12 @@
       "label": "Cache Max Entries",
       "type": "number",
       "default": 5000
+    },
+    {
+      "id": "exports_dir",
+      "label": "Exports Directory",
+      "type": "string",
+      "default": ""
     },
     {
       "id": "tmdb_api_call_limit",

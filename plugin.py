@@ -28,7 +28,7 @@ RUN_LOCK_STALE_SECONDS = 6 * 3600
 DEFAULT_AUTO_ENHANCE_DEBOUNCE_SECONDS = 180
 
 DEFAULT_TITLE_TEMPLATE = "{title} ({year})"
-DEFAULT_DESCRIPTION_TEMPLATE = "{title} ({year}) - {genres}\\nCast: {cast}\\nScores: {scores}\\n{overview}"
+DEFAULT_DESCRIPTION_TEMPLATE = "{overview}\\nGenre:{genres}\\nCast: {cast}\\nScores: {scores}\\n"
 
 
 class ApiCallLimitReached(Exception):

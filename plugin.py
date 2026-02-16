@@ -13,7 +13,6 @@ from django.utils import timezone
 from django.conf import settings
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-
 from apps.epg.models import ProgramData, EPGSource
 from apps.channels.models import Channel
 
@@ -26,10 +25,11 @@ LOGGER = logging.getLogger("plugins.epg_enhancer")
 _BACKGROUND_THREAD_LOCK = threading.Lock()
 _BACKGROUND_THREAD = None
 RUN_LOCK_STALE_SECONDS = 6 * 3600
+DEFAULT_AUTO_ENHANCE_DEBOUNCE_SECONDS = 180
 
 DEFAULT_TITLE_TEMPLATE = "{title} ({year})"
-
 DEFAULT_DESCRIPTION_TEMPLATE = "{title} ({year}) - {genres}\\nCast: {cast}\\nScores: {scores}\\n{overview}"
+
 
 class ApiCallLimitReached(Exception):
     pass
@@ -224,6 +224,13 @@ class Plugin:
             "type": "boolean",
             "default": True,
             "help_text": "Automatically enhance programs when EPG data is updated.",
+        },
+        {
+            "id": "auto_enhance_debounce_seconds",
+            "label": "Auto-Enhance Debounce (seconds)",
+            "type": "number",
+            "default": DEFAULT_AUTO_ENHANCE_DEBOUNCE_SECONDS,
+            "help_text": "Minimum seconds between auto-enhance triggers per source.",
         },
         {
             "id": "dry_run",
@@ -1628,6 +1635,65 @@ class Plugin:
             if logger:
                 logger.warning("EPG Enhancer failed to release run lock: %s", exc)
 
+    def _get_auto_trigger_state_path(self):
+        base_dir = getattr(settings, "MEDIA_ROOT", None) or getattr(
+            settings,
+            "BASE_DIR",
+            "",
+        )
+        return os.path.join(str(base_dir), "epg_enhancer_auto_trigger_state.json")
+
+    def _allow_auto_trigger(self, source_id, debounce_seconds, logger=None):
+        if debounce_seconds <= 0:
+            return True
+
+        state_path = self._get_auto_trigger_state_path()
+        lock_path = state_path + ".lock"
+        lock_fd = self._acquire_cache_lock(lock_path)
+        if lock_fd is None:
+            if logger:
+                logger.warning("Auto-trigger lock timeout; skipping auto-enhance.")
+            return False
+
+        now_ts = time.time()
+        try:
+            payload = {"sources": {}}
+            try:
+                with open(state_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except FileNotFoundError:
+                payload = {"sources": {}}
+            except Exception:
+                payload = {"sources": {}}
+
+            sources = payload.get("sources") or {}
+            source_key = str(source_id)
+            last_ts = float(sources.get(source_key, 0) or 0)
+
+            if last_ts and (now_ts - last_ts) < debounce_seconds:
+                if logger:
+                    logger.info(
+                        "Auto-enhance debounced: source_id=%s elapsed=%.1fs window=%ss",
+                        source_id,
+                        now_ts - last_ts,
+                        debounce_seconds,
+                    )
+                return False
+
+            sources[source_key] = now_ts
+            payload["sources"] = sources
+
+            parent = os.path.dirname(state_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp_path = state_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"))
+            os.replace(tmp_path, state_path)
+            return True
+        finally:
+            self._release_cache_lock(lock_path, lock_fd)
+
 
     def _acquire_cache_lock(self, lock_path, timeout_seconds=5):
         deadline = time.time() + timeout_seconds
@@ -1657,6 +1723,9 @@ def on_epg_source_updated(sender, instance, **kwargs):
     Automatically trigger EPG enhancement when EPG source is updated successfully.
     This hooks into the built-in EPG refresh completion.
     """
+    if kwargs.get("raw"):
+        return
+
     # Only trigger if the EPG source was successfully updated and is active
     if instance.status == 'success' and instance.is_active and instance.source_type != 'dummy':
         # Import here to avoid circular imports
@@ -1679,6 +1748,19 @@ def on_epg_source_updated(sender, instance, **kwargs):
 
                 loaded = PluginManager.get().get_plugin("epg_enhancer")
                 if loaded and loaded.instance and hasattr(loaded.instance, "_start_background_action"):
+                    debounce_seconds = int(
+                        plugin_settings.get(
+                            "auto_enhance_debounce_seconds",
+                            DEFAULT_AUTO_ENHANCE_DEBOUNCE_SECONDS,
+                        )
+                        or 0
+                    )
+                    if not loaded.instance._allow_auto_trigger(
+                        source_id=instance.id,
+                        debounce_seconds=debounce_seconds,
+                        logger=LOGGER,
+                    ):
+                        return
                     loaded.instance._start_background_action(
                         action_id="enhance",
                         settings=plugin_settings,

@@ -98,6 +98,13 @@ class Plugin:
             "help_text": "Minimum title similarity to accept a TMDB match (0 = disabled).",
         },
         {
+            "id": "subtitle_match_similarity",
+            "label": "Subtitle Match Similarity",
+            "type": "number",
+            "default": 0.90,
+            "help_text": "Minimum similarity for subtitle-based episode fallback matching.",
+        },
+        {
             "id": "tmdb_api_key",
             "label": "TMDB API Key",
             "type": "string",
@@ -363,6 +370,9 @@ class Plugin:
         tmdb_api_call_limit = int(settings.get("tmdb_api_call_limit", 0) or 0)
         omdb_api_call_limit = int(settings.get("omdb_api_call_limit", 1000) or 0)
         min_title_similarity = float(settings.get("min_title_similarity", 0.72) or 0)
+        subtitle_match_similarity = float(
+            settings.get("subtitle_match_similarity", 0.90) or 0
+        )
         cache_enabled = bool(settings.get("cache_enabled", True))
         cache_ttl_hours = float(settings.get("cache_ttl_hours", 48) or 0)
         cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
@@ -536,6 +546,7 @@ class Plugin:
                     call_counter=call_counter,
                     cache_context=cache_context,
                     min_title_similarity=min_title_similarity,
+                    subtitle_match_similarity=subtitle_match_similarity,
                     logger=logger,
                 )
                 if result.get("stop"):
@@ -719,6 +730,7 @@ class Plugin:
         call_counter,
         cache_context,
         min_title_similarity,
+        subtitle_match_similarity,
         logger,
     ):
         program_obj = program["program"]
@@ -770,6 +782,7 @@ class Plugin:
                             tmdb_api_key,
                             call_counter["tmdb"],
                             min_title_similarity,
+                            subtitle_match_similarity,
                             content_type_filter,
                             series_hints,
                         ),
@@ -778,7 +791,15 @@ class Plugin:
                     )
                 else:
                     metadata = self._call_with_retry(
-                        lambda: self._lookup_omdb(title, year, omdb_api_key, call_counter["omdb"], content_type_filter, series_hints),
+                        lambda: self._lookup_omdb(
+                            title,
+                            year,
+                            omdb_api_key,
+                            call_counter["omdb"],
+                            subtitle_match_similarity,
+                            content_type_filter,
+                            series_hints,
+                        ),
                         retries=retry_count,
                         backoff_seconds=retry_backoff_seconds,
                     )
@@ -977,7 +998,17 @@ class Plugin:
 
         return clean_title, year, series_hints
 
-    def _lookup_tmdb(self, title, year, api_key, call_counter, min_title_similarity, content_type_filter, series_hints):
+    def _lookup_tmdb(
+        self,
+        title,
+        year,
+        api_key,
+        call_counter,
+        min_title_similarity,
+        subtitle_match_similarity,
+        content_type_filter,
+        series_hints,
+    ):
         filter_value = (content_type_filter or "movies").lower()
         is_episode = bool((series_hints or {}).get("is_episode"))
 
@@ -1109,6 +1140,7 @@ class Plugin:
                         tmdb_id=tmdb_id,
                         api_key=api_key,
                         episode_title=(series_hints or {}).get("episode_title"),
+                        min_similarity=subtitle_match_similarity,
                         call_counter=call_counter,
                     )
                     if matched_episode:
@@ -1133,7 +1165,16 @@ class Plugin:
 
         return None
 
-    def _lookup_omdb(self, title, year, api_key, call_counter, content_type_filter, series_hints):
+    def _lookup_omdb(
+        self,
+        title,
+        year,
+        api_key,
+        call_counter,
+        subtitle_match_similarity,
+        content_type_filter,
+        series_hints,
+    ):
         filter_value = (content_type_filter or "movies").lower()
         is_episode = bool((series_hints or {}).get("is_episode"))
 
@@ -1224,6 +1265,7 @@ class Plugin:
                         api_key=api_key,
                         episode_title=(series_hints or {}).get("episode_title"),
                         total_seasons=data.get("totalSeasons"),
+                        min_similarity=subtitle_match_similarity,
                         call_counter=call_counter,
                     )
                     if matched_episode:
@@ -1261,14 +1303,21 @@ class Plugin:
                 if backoff_seconds:
                     time.sleep(backoff_seconds)
 
-    def _find_tmdb_episode_by_title(self, tmdb_id, api_key, episode_title, call_counter):
+    def _find_tmdb_episode_by_title(
+        self,
+        tmdb_id,
+        api_key,
+        episode_title,
+        min_similarity,
+        call_counter,
+    ):
         candidate_title = (episode_title or "").strip()
         if not candidate_title:
             return None
 
         # Keep this conservative to avoid excessive API usage.
         max_seasons_to_scan = 2
-        min_similarity = 0.90
+        min_similarity = float(min_similarity or 0)
 
         self._consume_api_call(call_counter)
         detail_resp = self._get_requests_session().get(
@@ -1322,13 +1371,21 @@ class Plugin:
             return best
         return None
 
-    def _find_omdb_episode_by_title(self, series_imdb_id, api_key, episode_title, total_seasons, call_counter):
+    def _find_omdb_episode_by_title(
+        self,
+        series_imdb_id,
+        api_key,
+        episode_title,
+        total_seasons,
+        min_similarity,
+        call_counter,
+    ):
         candidate_title = (episode_title or "").strip()
         if not candidate_title:
             return None
 
         max_seasons_to_scan = 2
-        min_similarity = 0.90
+        min_similarity = float(min_similarity or 0)
 
         try:
             total = int(total_seasons or 0)

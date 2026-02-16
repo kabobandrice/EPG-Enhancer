@@ -80,6 +80,12 @@
       "default": 0.72
     },
     {
+      "id": "subtitle_match_similarity",
+      "label": "Subtitle Match Similarity",
+      "type": "number",
+      "default": 0.9
+    },
+    {
       "id": "tmdb_api_key",
       "label": "TMDB API Key",
       "type": "string",

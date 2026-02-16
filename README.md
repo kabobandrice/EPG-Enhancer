@@ -41,6 +41,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **API Retry Count**: Retry failed API calls this many times.
 - **Retry Backoff (seconds)**: Wait time between retry attempts.
 - **Min Title Similarity (TMDB)**: Minimum title similarity to accept a TMDB match (0 = disabled).
+- **Subtitle Match Similarity**: Minimum similarity for subtitle-based episode-title fallback matching.
 - **Channel Group Name Filter**: Only process channels in this group name (case-insensitive). Leave blank for all.
 - **Channel Name Regex**: Optional regex filter on channel names (e.g. `(?i)movie`).
 - **Lookahead/Lookback Hours**: Time window to enhance programs (default: +12h / -12h).
@@ -53,10 +54,10 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Exports Directory**: Optional absolute path for reports. Leave blank to use the app data exports folder.
 - **Dry Run**: Preview without saving changes.
 - **Replace Program Title**: Replace the program title using the title template.
-- **Title Template**: Template for titles. Tokens: `{title}` (movie/series title), `{year}` (release/air year), `{genre}` (first genre).
+- **Title Template**: Template for titles. Tokens: `{title}`, `{year}`, `{genre}`.
 - **Series Title Template**: Optional title template override for series entries.
 - **Replace Program Subtitle**: Replace `sub_title` using subtitle template.
-- **Subtitle Template**: Template for subtitle when subtitle replacement is enabled. Tokens include `{episode_title}`, `{season_episode}`, `{episode}`, `{air_date}`, `{release_date}`.
+- **Subtitle Template**: Template for subtitle when subtitle replacement is enabled. Tokens: `{episode_title}`, `{season_episode}`, `{episode}`, `{air_date}`, `{release_date}`.
 - **Description Update Mode**: Append metadata block or replace the description entirely.
 - **Description Template**: Template for metadata block. See Template token reference for available tokens.
 - **Series Description Template**: Optional description template override for series entries.

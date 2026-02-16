@@ -1244,8 +1244,6 @@ class Plugin:
         entry = context.get("entries", {}).get(cache_key)
         if not entry:
             return None
-        entry["last_used"] = time.time()
-        context["dirty"] = True
         return entry
 
     def _cache_set(self, context, cache_key, metadata, provider):

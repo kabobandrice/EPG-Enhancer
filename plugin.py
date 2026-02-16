@@ -370,20 +370,11 @@ class Plugin:
         if action == "enhance" and not params.get("_background"):
             return self._start_background_action(action_id=action, settings=settings, logger=logger)
 
-        legacy_provider = (settings.get("provider", "") or "").strip().lower()
-        legacy_priority = (settings.get("provider_priority", "tmdb_first") or "tmdb_first").strip().lower()
-        primary_provider = (
-            settings.get("primary_provider")
-            or legacy_provider
-            or "tmdb"
-        )
-        primary_provider = str(primary_provider).strip().lower()
+        primary_provider = str(settings.get("primary_provider", "tmdb") or "tmdb").strip().lower()
         fallback_providers_order = (settings.get("fallback_providers_order", "") or "").strip()
         provider_order = self._build_provider_order(
             primary_provider=primary_provider,
             fallback_csv=fallback_providers_order,
-            legacy_provider=legacy_provider,
-            legacy_priority=legacy_priority,
         )
         content_type_filter = (settings.get("content_type_filter", "movies") or "movies").lower()
         tmdb_api_key = settings.get("tmdb_api_key", "").strip()
@@ -1412,7 +1403,7 @@ class Plugin:
 
         return mdblist_metadata.get("ratings") or {}
 
-    def _build_provider_order(self, primary_provider, fallback_csv, legacy_provider, legacy_priority):
+    def _build_provider_order(self, primary_provider, fallback_csv):
         allowed = {"tmdb", "omdb", "mdblist"}
 
         if primary_provider not in allowed:
@@ -1425,9 +1416,6 @@ class Plugin:
                 for value in str(fallback_csv).split(",")
                 if value and value.strip()
             ]
-        elif legacy_provider == "both":
-            fallback_values = ["omdb"] if legacy_priority == "tmdb_first" else ["tmdb"]
-            primary_provider = "tmdb" if legacy_priority == "tmdb_first" else "omdb"
 
         order = [primary_provider]
         for value in fallback_values:

@@ -170,6 +170,24 @@
       "default": "{title} ({year})"
     },
     {
+      "id": "replace_subtitle",
+      "label": "Replace Program Subtitle",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "id": "subtitle_template",
+      "label": "Subtitle Template",
+      "type": "string",
+      "default": "{episode_title}"
+    },
+    {
+      "id": "series_title_template",
+      "label": "Series Title Template",
+      "type": "string",
+      "default": ""
+    },
+    {
       "id": "description_mode",
       "label": "Description Update Mode",
       "type": "select",
@@ -190,6 +208,12 @@
       "label": "Description Template",
       "type": "string",
       "default": "{title} ({year}) - {genres}\\nCast: {cast}\\nScores: {scores}\\n{overview}"
+    },
+    {
+      "id": "series_description_template",
+      "label": "Series Description Template",
+      "type": "string",
+      "default": ""
     },
     {
       "id": "auto_enhance",

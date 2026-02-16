@@ -203,6 +203,31 @@ class Plugin:
             "help_text": "Template used when replacing titles. Tokens: {title}, {year}, {genre}",
         },
         {
+            "id": "replace_subtitle",
+            "label": "Replace Program Subtitle",
+            "type": "boolean",
+            "default": False,
+            "help_text": "When enabled, replace the program subtitle (sub_title) with the subtitle template.",
+        },
+        {
+            "id": "subtitle_template",
+            "label": "Subtitle Template",
+            "type": "string",
+            "default": "{episode_title}",
+            "help_text": (
+                "Template used when replacing subtitle. Tokens include "
+                "{episode_title}, {season_episode}, {episode}, {air_date}, "
+                "{release_date}."
+            ),
+        },
+        {
+            "id": "series_title_template",
+            "label": "Series Title Template",
+            "type": "string",
+            "default": "",
+            "help_text": "Optional override for title template when content_type is series. Leave blank to use Title Template.",
+        },
+        {
             "id": "description_mode",
             "label": "Description Update Mode",
             "type": "select",
@@ -222,8 +247,17 @@ class Plugin:
                 "Template for the metadata block. Tokens: {title} (movie title), "
                 "{year} (release year), {genre} (first genre), {genres} (all genres), "
                 "{runtime} (runtime), {director} (director), {writers} (writers), {cast} (top cast list), {scores} (ratings summary), "
-                "{overview} (plot summary), {series_title} (series name), {episode_title} (episode title), {season_episode} (SxxEyy)."
+                "{overview} (plot summary), {series_title} (series name), {episode_title} (episode title), "
+                "{season_episode} (SxxEyy), {episode} (episode number), {air_date} (episode/series air date), "
+                "{release_date} (movie release date)."
             ),
+        },
+        {
+            "id": "series_description_template",
+            "label": "Series Description Template",
+            "type": "string",
+            "default": "",
+            "help_text": "Optional override for description template when content_type is series. Leave blank to use Description Template.",
         },
         {
             "id": "auto_enhance",
@@ -334,14 +368,25 @@ class Plugin:
         cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
         exports_dir_override = (settings.get("exports_dir", "") or "").strip()
         replace_title = bool(settings.get("replace_title", False))
+        replace_subtitle = bool(settings.get("replace_subtitle", False))
         description_mode = (settings.get("description_mode", "append") or "append").lower()
         title_template = settings.get("title_template", DEFAULT_TITLE_TEMPLATE) or DEFAULT_TITLE_TEMPLATE
+        series_title_template = (settings.get("series_title_template", "") or "").strip()
+        subtitle_template = settings.get("subtitle_template", "{episode_title}") or "{episode_title}"
         description_template = settings.get(
             "description_template",
             DEFAULT_DESCRIPTION_TEMPLATE,
         ) or DEFAULT_DESCRIPTION_TEMPLATE
+        series_description_template = (
+            settings.get("series_description_template", "")
+            or ""
+        )
         # Normalize literal escapes entered in UI to real line breaks.
         description_template = description_template.replace("\\r\\n", "\n").replace("\\n", "\n")
+        series_description_template = (
+            series_description_template.replace("\\r\\n", "\n").replace("\\n", "\n")
+        )
+        subtitle_template = subtitle_template.replace("\\r\\n", "\n").replace("\\n", "\n")
 
         logger.info(
             "EPG Enhancer run started: action=%s provider=%s priority=%s dry_run=%s lookback_h=%s lookahead_h=%s max_programs=%s cache=%s",
@@ -477,9 +522,13 @@ class Plugin:
                     dry_run=dry_mode,
                     force_reapply=force_reapply,
                     replace_title=replace_title,
+                    replace_subtitle=replace_subtitle,
                     description_mode=description_mode,
                     title_template=title_template,
+                    series_title_template=series_title_template,
+                    subtitle_template=subtitle_template,
                     description_template=description_template,
+                    series_description_template=series_description_template,
                     provider_priority=provider_priority,
                     content_type_filter=content_type_filter,
                     retry_count=retry_count,
@@ -656,9 +705,13 @@ class Plugin:
         dry_run,
         force_reapply,
         replace_title,
+        replace_subtitle,
         description_mode,
         title_template,
+        series_title_template,
+        subtitle_template,
         description_template,
+        series_description_template,
         provider_priority,
         content_type_filter,
         retry_count,
@@ -761,7 +814,13 @@ class Plugin:
                 "reason": error or "No metadata found",
             }
 
-        enhanced_block = render_template(description_template, metadata)
+        is_series = (metadata.get("content_type") or "").lower() == "series"
+
+        effective_description_template = description_template
+        if is_series and series_description_template:
+            effective_description_template = series_description_template
+
+        enhanced_block = render_template(effective_description_template, metadata)
         if not enhanced_block:
             return {
                 "status": "skipped",
@@ -781,9 +840,17 @@ class Plugin:
             if program_obj.description:
                 proposed_description = f"{program_obj.description.strip()}\n\n{enhanced_block}"
 
+        effective_title_template = title_template
+        if is_series and series_title_template:
+            effective_title_template = series_title_template
+
         proposed_title = None
         if replace_title:
-            proposed_title = render_title_template(title_template, metadata) or None
+            proposed_title = render_title_template(effective_title_template, metadata) or None
+
+        proposed_sub_title = None
+        if replace_subtitle:
+            proposed_sub_title = render_template(subtitle_template, metadata) or None
 
         # Content-based caching: only skip if we've processed this exact program content before
         already_applied = False
@@ -811,8 +878,10 @@ class Plugin:
                 result.update(
                     {
                         "current_title": program_obj.title,
+                        "current_sub_title": program_obj.sub_title or "",
                         "current_description": program_obj.description or "",
                         "proposed_title": proposed_title,
+                        "proposed_sub_title": proposed_sub_title,
                         "proposed_description": proposed_description,
                     }
                 )
@@ -825,6 +894,10 @@ class Plugin:
         if proposed_title:
             program_obj.title = proposed_title
             update_fields.append("title")
+
+        if replace_subtitle:
+            program_obj.sub_title = proposed_sub_title or ""
+            update_fields.append("sub_title")
 
         stored_content_hash = self._get_content_hash(
             program_obj.title,
@@ -996,6 +1069,8 @@ class Plugin:
                 "season": (series_hints or {}).get("season"),
                 "episode": (series_hints or {}).get("episode"),
                 "year": ((detail.get("first_air_date") if mode == "tv" else detail.get("release_date")) or "")[:4],
+                "release_date": detail.get("release_date") if mode == "movie" else "",
+                "air_date": detail.get("first_air_date") if mode == "tv" else "",
                 "genres": [g.get("name") for g in detail.get("genres", []) if g.get("name")],
                 "overview": detail.get("overview"),
                 "cast": cast,
@@ -1019,6 +1094,8 @@ class Plugin:
                     ep_detail = ep_resp.json()
                     metadata["episode_title"] = ep_detail.get("name") or metadata.get("episode_title") or ""
                     metadata["overview"] = ep_detail.get("overview") or metadata.get("overview")
+                    if ep_detail.get("air_date"):
+                        metadata["air_date"] = ep_detail.get("air_date")
                     if ep_detail.get("runtime"):
                         metadata["runtime"] = ep_detail.get("runtime")
                 except Exception:
@@ -1044,6 +1121,8 @@ class Plugin:
                         )
                         if matched_episode.get("overview"):
                             metadata["overview"] = matched_episode.get("overview")
+                        if matched_episode.get("air_date"):
+                            metadata["air_date"] = matched_episode.get("air_date")
                         if matched_episode.get("runtime"):
                             metadata["runtime"] = matched_episode.get("runtime")
                 except Exception:
@@ -1099,6 +1178,8 @@ class Plugin:
                 "season": (series_hints or {}).get("season"),
                 "episode": (series_hints or {}).get("episode"),
                 "year": data.get("Year"),
+                "release_date": data.get("Released") if omdb_type == "movie" else "",
+                "air_date": "",
                 "genres": genres,
                 "overview": data.get("Plot"),
                 "cast": cast,
@@ -1129,6 +1210,8 @@ class Plugin:
                         metadata["episode_title"] = ep_data.get("Title") or metadata.get("episode_title") or ""
                         if ep_data.get("Plot") and ep_data.get("Plot") != "N/A":
                             metadata["overview"] = ep_data.get("Plot")
+                        if ep_data.get("Released") and ep_data.get("Released") != "N/A":
+                            metadata["air_date"] = ep_data.get("Released")
                         if ep_data.get("Runtime") and ep_data.get("Runtime") != "N/A":
                             metadata["runtime"] = ep_data.get("Runtime")
                 except Exception:
@@ -1153,6 +1236,8 @@ class Plugin:
                         )
                         if matched_episode.get("overview"):
                             metadata["overview"] = matched_episode.get("overview")
+                        if matched_episode.get("air_date"):
+                            metadata["air_date"] = matched_episode.get("air_date")
                         if matched_episode.get("runtime"):
                             metadata["runtime"] = matched_episode.get("runtime")
                 except Exception:
@@ -1228,6 +1313,7 @@ class Plugin:
                         "season": season_number,
                         "episode": ep.get("episode_number"),
                         "episode_title": ep_name,
+                        "air_date": ep.get("air_date"),
                         "overview": ep.get("overview"),
                         "runtime": ep.get("runtime"),
                     }
@@ -1308,6 +1394,7 @@ class Plugin:
             if ep_data.get("Response") == "True":
                 best["overview"] = ep_data.get("Plot")
                 best["runtime"] = ep_data.get("Runtime")
+                best["air_date"] = ep_data.get("Released")
 
         return best
 

@@ -32,6 +32,8 @@ def build_template_context(metadata):
         "season_episode": season_episode,
         "content_type": metadata.get("content_type") or "",
         "year": str(metadata.get("year") or ""),
+        "release_date": str(metadata.get("release_date") or ""),
+        "air_date": str(metadata.get("air_date") or ""),
         "genre": genres_list[0] if genres_list else "",
         "genres": ", ".join(genres_list) if genres_list else "",
         "runtime": str(metadata.get("runtime") or ""),

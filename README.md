@@ -50,12 +50,37 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Enable Metadata Cache**: Reuse metadata across refreshes to reduce API calls.
 - **Cache TTL (hours)**: Expire cached metadata after this many hours (0 = never).
 - **Cache Max Entries**: Maximum cached items to keep (0 = unlimited).
+- **Exports Directory**: Optional absolute path for reports. Leave blank to use the app data exports folder.
 - **Dry Run**: Preview without saving changes.
 - **Replace Program Title**: Replace the program title using the title template.
-- **Title Template**: Template for titles. Tokens: `{title}` (movie title), `{year}` (release year), `{genre}` (first genre).
+- **Title Template**: Template for titles. Tokens: `{title}` (movie/series title), `{year}` (release/air year), `{genre}` (first genre).
+- **Series Title Template**: Optional title template override for series entries.
+- **Replace Program Subtitle**: Replace `sub_title` using subtitle template.
+- **Subtitle Template**: Template for subtitle when subtitle replacement is enabled. Tokens include `{episode_title}`, `{season_episode}`, `{episode}`, `{air_date}`, `{release_date}`.
 - **Description Update Mode**: Append metadata block or replace the description entirely.
-- **Description Template**: Template for the metadata block. Tokens: `{title}` (title), `{year}` (release/air year), `{genre}` (first genre), `{genres}` (all genres), `{runtime}` (runtime), `{director}` (director), `{writers}` (writers), `{cast}` (top cast list), `{scores}` (ratings summary), `{overview}` (plot), `{series_title}` (series title), `{episode_title}` (episode title), `{season}` (season number), `{episode}` (episode number), `{season_episode}` (SxxEyy), `{content_type}` (`movie` or `series`).
+- **Description Template**: Template for metadata block. See Template token reference for available tokens.
+- **Series Description Template**: Optional description template override for series entries.
 - **Auto-Enhance on EPG Updates**: Automatically enhance programs when EPG data is updated (default: enabled).
+
+### Template token reference
+- `{title}`: Movie or series title.
+- `{year}`: Release/air year.
+- `{genre}`: First genre.
+- `{genres}`: Comma-separated genres.
+- `{runtime}`: Runtime.
+- `{director}`: Director(s).
+- `{writers}`: Writer(s).
+- `{cast}`: Top cast list.
+- `{scores}`: Ratings summary.
+- `{overview}`: Plot summary.
+- `{series_title}`: Series name.
+- `{episode_title}`: Episode title.
+- `{season}`: Season number.
+- `{episode}`: Episode number.
+- `{season_episode}`: Formatted `SxxEyy`.
+- `{air_date}`: Air date (series/episode when available).
+- `{release_date}`: Release date (movie when available).
+- `{content_type}`: `movie` or `series`.
 
 ## Actions
 - **Enhance Programs**: Queues enhancement in background by default and returns immediately.
@@ -70,9 +95,10 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Smart Caching**: Uses content hashing to detect program changes and only re-processes when content actually changes.
 - **Automatic Triggering**: Can automatically run when EPG sources are updated (when auto-enhance is enabled).
 - Updates title/description based on templates and records metadata in `custom_properties`.
-- Saves a full per-run report to `/data/exports/epg_enhancer_report_*.json` and updates `/data/exports/epg_enhancer_report_latest.json`.
+- Saves a full per-run report to configured exports path and updates `epg_enhancer_report_latest.json` in that folder.
 - Uses TMDB `search/movie` / `search/tv` and details endpoints (with credits/external IDs) or OMDb `t` lookup with `type=movie|series`.
 - For series/episodes, the plugin detects season/episode hints (for example `S02E05`) and attempts episode-level enrichment when supported by the provider.
+- If no season/episode number is present but subtitle contains episode title, provider fallback matching attempts episode-title resolution.
 
 ## Notes
 - For best matches, ensure EPG titles include the movie name (optionally with year). The plugin strips trailing `(YYYY)` when present.

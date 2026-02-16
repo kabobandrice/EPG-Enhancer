@@ -1,13 +1,13 @@
 {
   "name": "EPG Enhancer",
   "version": "0.1.1",
-  "description": "Enhance EPG entries with metadata from TMDB or OMDb/IMDB.",
+  "description": "Enhance EPG entries with metadata from TMDB, OMDb/IMDB, or MDBList.",
   "author": "kabobandrice",
   "help_url": "https://github.com/kabobandrice/EPG-Enhancer",
   "fields": [
     {
-      "id": "provider",
-      "label": "Metadata Provider",
+      "id": "primary_provider",
+      "label": "Primary Metadata Provider",
       "type": "select",
       "default": "tmdb",
       "options": [
@@ -20,26 +20,16 @@
           "label": "OMDb / IMDB"
         },
         {
-          "value": "both",
-          "label": "TMDB + OMDb (fallback)"
+          "value": "mdblist",
+          "label": "MDBList"
         }
       ]
     },
     {
-      "id": "provider_priority",
-      "label": "Provider Priority (when using both)",
-      "type": "select",
-      "default": "tmdb_first",
-      "options": [
-        {
-          "value": "tmdb_first",
-          "label": "TMDB first"
-        },
-        {
-          "value": "omdb_first",
-          "label": "OMDb first"
-        }
-      ]
+      "id": "fallback_providers_order",
+      "label": "Fallback Providers (ordered CSV)",
+      "type": "string",
+      "default": ""
     },
     {
       "id": "content_type_filter",
@@ -94,6 +84,12 @@
     {
       "id": "omdb_api_key",
       "label": "OMDb API Key",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "id": "mdblist_api_key",
+      "label": "MDBList API Key",
       "type": "string",
       "default": ""
     },
@@ -162,6 +158,18 @@
       "label": "OMDb API Call Limit",
       "type": "number",
       "default": 1000
+    },
+    {
+      "id": "mdblist_api_call_limit",
+      "label": "MDBList API Call Limit",
+      "type": "number",
+      "default": 1000
+    },
+    {
+      "id": "enable_ratings_enrichment",
+      "label": "Enable MDBList Ratings Enrichment",
+      "type": "boolean",
+      "default": false
     },
     {
       "id": "replace_title",

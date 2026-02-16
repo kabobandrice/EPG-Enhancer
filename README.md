@@ -1,6 +1,6 @@
 # EPG Enhancer
 
-Dispatcharr plugin that enhances EPG programs with metadata (title, year, genres, cast, scores) from TMDB or OMDb/IMDB and appends it to the program description.
+Dispatcharr plugin that enhances EPG programs with metadata (title, year, genres, cast, scores) from TMDB, OMDb/IMDB, or MDBList and appends it to the program description.
 
 
 ## Installation Methods
@@ -33,11 +33,12 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - Existing EPG rows may be rebuilt on refresh; enhancements are reapplied by plugin runs.
 
 ## Settings
-- **Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `TMDB + OMDb (fallback)`.
-- **Provider Priority**: When using both, choose which provider to try first.
+- **Primary Metadata Provider**: `TMDB` (default), `OMDb / IMDB`, or `MDBList`.
+- **Fallback Providers (ordered CSV)**: Optional comma-separated fallback order (example: `omdb,mdblist`). Blank = primary only.
 - **Program Type Filter**: `movies`, `series`, or `both` to control which content gets enhanced.
 - **TMDB API Key**: Required for TMDB provider. Get one at https://www.themoviedb.org/settings/api
 - **OMDb API Key**: Required for OMDb provider. Get one at https://www.omdbapi.com/apikey.aspx
+- **MDBList API Key**: Required for MDBList provider and MDBList ratings enrichment.
 - **API Retry Count**: Retry failed API calls this many times.
 - **Retry Backoff (seconds)**: Wait time between retry attempts.
 - **Min Title Similarity (TMDB)**: Minimum title similarity to accept a TMDB match (0 = disabled).
@@ -48,6 +49,8 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Max Programs per Run**: Safety cap per invocation (default: 2000).
 - **TMDB API Call Limit**: Maximum TMDB API calls per run (0 = unlimited).
 - **OMDb API Call Limit**: Maximum OMDb API calls per run (0 = unlimited, default 1000).
+- **MDBList API Call Limit**: Maximum MDBList API calls per run (0 = unlimited, default 1000).
+- **Enable MDBList Ratings Enrichment**: Enrich ratings using MDBList after a metadata match from another provider.
 - **Enable Metadata Cache**: Reuse metadata across refreshes to reduce API calls.
 - **Cache TTL (hours)**: Expire cached metadata after this many hours (0 = never).
 - **Cache Max Entries**: Maximum cached items to keep (0 = unlimited).
@@ -97,7 +100,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - **Automatic Triggering**: Can automatically run when EPG sources are updated (when auto-enhance is enabled).
 - Updates title/description based on templates and records metadata in `custom_properties`.
 - Saves a full per-run report to configured exports path and updates `epg_enhancer_report_latest.json` in that folder.
-- Uses TMDB `search/movie` / `search/tv` and details endpoints (with credits/external IDs) or OMDb `t` lookup with `type=movie|series`.
+- Uses TMDB `search/movie` / `search/tv` and details endpoints (with credits/external IDs), OMDb `t` lookup with `type=movie|series`, and MDBList API lookups.
 - For series/episodes, the plugin detects season/episode hints (for example `S02E05`) and attempts episode-level enrichment when supported by the provider.
 - If no season/episode number is present but subtitle contains episode title, provider fallback matching attempts episode-title resolution.
 
@@ -105,13 +108,13 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - For best matches, ensure EPG titles include the movie name (optionally with year). The plugin strips trailing `(YYYY)` when present.
 - Keep the per-run limit modest if you expect many entries; heavy runs should be scheduled via smaller windows.
 - OMDb has a daily request limit of 1,000/day for free accounts. Use **OMDb API Call Limit** and smaller windows to avoid hitting it.
-- Network access to TMDB/OMDb must be allowed from the Dispatcharr host.
+- Network access to TMDB/OMDb/MDBList must be allowed from the Dispatcharr host.
 
 ## Quick Start
 Use this baseline for a safe first run:
-- Provider: `both`
-- Provider Priority: `tmdb_first`
-- Add TMDB and OMDb API keys
+- Primary Metadata Provider: `tmdb`
+- Fallback Providers (ordered CSV): `omdb`
+- Add TMDB and OMDb API keys (and optionally MDBList API key)
 - Dry Run: `true`
 - Lookahead Hours: `4`
 - Lookback Hours: `1`

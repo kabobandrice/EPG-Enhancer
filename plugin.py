@@ -42,27 +42,23 @@ class Plugin:
 
     fields = [
         {
-            "id": "provider",
-            "label": "Metadata Provider",
+            "id": "primary_provider",
+            "label": "Primary Metadata Provider",
             "type": "select",
             "default": "tmdb",
             "options": [
                 {"value": "tmdb", "label": "TMDB"},
                 {"value": "omdb", "label": "OMDb / IMDB"},
-                {"value": "both", "label": "TMDB + OMDb (fallback)"},
+                {"value": "mdblist", "label": "MDBList"},
             ],
-            "help_text": "TMDB requires an API key. OMDb also requires an API key for reliable results.",
+            "help_text": "Primary provider to query first.",
         },
         {
-            "id": "provider_priority",
-            "label": "Provider Priority (when using both)",
-            "type": "select",
-            "default": "tmdb_first",
-            "options": [
-                {"value": "tmdb_first", "label": "TMDB first"},
-                {"value": "omdb_first", "label": "OMDb first"},
-            ],
-            "help_text": "Choose which provider to try first when using TMDB + OMDb.",
+            "id": "fallback_providers_order",
+            "label": "Fallback Providers (ordered CSV)",
+            "type": "string",
+            "default": "",
+            "help_text": "Optional ordered fallback providers, comma-separated (example: omdb,mdblist). Leave blank to use only primary provider.",
         },
         {
             "id": "content_type_filter",
@@ -117,6 +113,13 @@ class Plugin:
             "type": "string",
             "default": "",
             "help_text": "Optional fallback for IMDB/RottenTomatoes/Metacritic scores. Create at omdbapi.com.",
+        },
+        {
+            "id": "mdblist_api_key",
+            "label": "MDBList API Key",
+            "type": "string",
+            "default": "",
+            "help_text": "Required for MDBList provider or MDBList ratings enrichment.",
         },
         {
             "id": "channel_group_name",
@@ -194,6 +197,20 @@ class Plugin:
             "type": "number",
             "default": 1000,
             "help_text": "Maximum OMDb API calls per run (0 = unlimited).",
+        },
+        {
+            "id": "mdblist_api_call_limit",
+            "label": "MDBList API Call Limit",
+            "type": "number",
+            "default": 1000,
+            "help_text": "Maximum MDBList API calls per run (0 = unlimited).",
+        },
+        {
+            "id": "enable_ratings_enrichment",
+            "label": "Enable MDBList Ratings Enrichment",
+            "type": "boolean",
+            "default": False,
+            "help_text": "When enabled, enrich matched metadata ratings using MDBList as a secondary ratings source.",
         },
         {
             "id": "replace_title",
@@ -353,11 +370,25 @@ class Plugin:
         if action == "enhance" and not params.get("_background"):
             return self._start_background_action(action_id=action, settings=settings, logger=logger)
 
-        provider = settings.get("provider", "tmdb")
-        provider_priority = settings.get("provider_priority", "tmdb_first")
+        legacy_provider = (settings.get("provider", "") or "").strip().lower()
+        legacy_priority = (settings.get("provider_priority", "tmdb_first") or "tmdb_first").strip().lower()
+        primary_provider = (
+            settings.get("primary_provider")
+            or legacy_provider
+            or "tmdb"
+        )
+        primary_provider = str(primary_provider).strip().lower()
+        fallback_providers_order = (settings.get("fallback_providers_order", "") or "").strip()
+        provider_order = self._build_provider_order(
+            primary_provider=primary_provider,
+            fallback_csv=fallback_providers_order,
+            legacy_provider=legacy_provider,
+            legacy_priority=legacy_priority,
+        )
         content_type_filter = (settings.get("content_type_filter", "movies") or "movies").lower()
         tmdb_api_key = settings.get("tmdb_api_key", "").strip()
         omdb_api_key = settings.get("omdb_api_key", "").strip()
+        mdblist_api_key = settings.get("mdblist_api_key", "").strip()
         channel_group_name = settings.get("channel_group_name", "").strip()
         channel_name_regex = settings.get("channel_name_regex", "").strip()
         lookahead_hours = int(settings.get("lookahead_hours", 12) or 12)
@@ -369,10 +400,12 @@ class Plugin:
         retry_backoff_seconds = float(settings.get("retry_backoff_seconds", 1) or 0)
         tmdb_api_call_limit = int(settings.get("tmdb_api_call_limit", 0) or 0)
         omdb_api_call_limit = int(settings.get("omdb_api_call_limit", 1000) or 0)
+        mdblist_api_call_limit = int(settings.get("mdblist_api_call_limit", 1000) or 0)
         min_title_similarity = float(settings.get("min_title_similarity", 0.72) or 0)
         subtitle_match_similarity = float(
             settings.get("subtitle_match_similarity", 0.90) or 0
         )
+        enable_ratings_enrichment = bool(settings.get("enable_ratings_enrichment", False))
         cache_enabled = bool(settings.get("cache_enabled", True))
         cache_ttl_hours = float(settings.get("cache_ttl_hours", 48) or 0)
         cache_max_entries = int(settings.get("cache_max_entries", 5000) or 0)
@@ -399,10 +432,9 @@ class Plugin:
         subtitle_template = subtitle_template.replace("\\r\\n", "\n").replace("\\n", "\n")
 
         logger.info(
-            "EPG Enhancer run started: action=%s provider=%s priority=%s dry_run=%s lookback_h=%s lookahead_h=%s max_programs=%s cache=%s",
+            "EPG Enhancer run started: action=%s provider_order=%s dry_run=%s lookback_h=%s lookahead_h=%s max_programs=%s cache=%s",
             action,
-            provider,
-            provider_priority,
+            ",".join(provider_order),
             dry_run,
             lookback_hours,
             lookahead_hours,
@@ -410,12 +442,23 @@ class Plugin:
             cache_enabled,
         )
 
-        if provider == "tmdb" and not tmdb_api_key:
-            return {"status": "error", "message": "TMDB API key is required when provider is TMDB."}
-        if provider == "omdb" and not omdb_api_key:
-            return {"status": "error", "message": "OMDb API key is required when provider is OMDb."}
-        if provider == "both" and not (tmdb_api_key or omdb_api_key):
-            return {"status": "error", "message": "At least one API key is required when provider is TMDB + OMDb."}
+        available_provider_order = []
+        for candidate_provider in provider_order:
+            if candidate_provider == "tmdb" and tmdb_api_key:
+                available_provider_order.append(candidate_provider)
+            elif candidate_provider == "omdb" and omdb_api_key:
+                available_provider_order.append(candidate_provider)
+            elif candidate_provider == "mdblist" and mdblist_api_key:
+                available_provider_order.append(candidate_provider)
+
+        if not available_provider_order:
+            return {
+                "status": "error",
+                "message": (
+                    "No usable providers configured. Set API keys for at least one provider in the provider order "
+                    "(TMDB, OMDb, MDBList)."
+                ),
+            }
 
         if channel_name_regex:
             try:
@@ -450,7 +493,7 @@ class Plugin:
                 "matched": 0,
                 "skipped": 0,
                 "remaining": 0,
-                "api_calls": {"tmdb": 0, "omdb": 0},
+                "api_calls": {"tmdb": 0, "omdb": 0, "mdblist": 0},
                 "started_at": timezone.now().isoformat(),
                 "finished_at": timezone.now().isoformat(),
             }
@@ -463,7 +506,7 @@ class Plugin:
                 "matched": 0,
                 "skipped": 0,
                 "dry_run": dry_run,
-                "api_calls": {"tmdb": 0, "omdb": 0},
+                "api_calls": {"tmdb": 0, "omdb": 0, "mdblist": 0},
                 "details": {"updated": [], "preview": [], "skipped": []},
             }
             report_file = self._save_full_report(
@@ -495,6 +538,7 @@ class Plugin:
         call_counter = {
             "tmdb": {"count": 0, "limit": tmdb_api_call_limit},
             "omdb": {"count": 0, "limit": omdb_api_call_limit},
+            "mdblist": {"count": 0, "limit": mdblist_api_call_limit},
         }
         cache_context = self._load_cache_context(
             enabled=cache_enabled,
@@ -515,7 +559,7 @@ class Plugin:
             "matched": 0,
             "skipped": 0,
             "remaining": total_programs,
-            "api_calls": {"tmdb": 0, "omdb": 0},
+            "api_calls": {"tmdb": 0, "omdb": 0, "mdblist": 0},
             "started_at": timezone.now().isoformat(),
             "finished_at": None,
         }
@@ -526,9 +570,10 @@ class Plugin:
                 attempted += 1
                 result = self._process_program(
                     program=program,
-                    provider=provider,
+                    provider_order=provider_order,
                     tmdb_api_key=tmdb_api_key,
                     omdb_api_key=omdb_api_key,
+                    mdblist_api_key=mdblist_api_key,
                     dry_run=dry_mode,
                     force_reapply=force_reapply,
                     replace_title=replace_title,
@@ -539,7 +584,7 @@ class Plugin:
                     subtitle_template=subtitle_template,
                     description_template=description_template,
                     series_description_template=series_description_template,
-                    provider_priority=provider_priority,
+                    enable_ratings_enrichment=enable_ratings_enrichment,
                     content_type_filter=content_type_filter,
                     retry_count=retry_count,
                     retry_backoff_seconds=retry_backoff_seconds,
@@ -571,6 +616,7 @@ class Plugin:
                         "api_calls": {
                             "tmdb": call_counter["tmdb"].get("count", 0),
                             "omdb": call_counter["omdb"].get("count", 0),
+                            "mdblist": call_counter["mdblist"].get("count", 0),
                         },
                     }
                 )
@@ -593,6 +639,7 @@ class Plugin:
                 "api_calls": {
                     "tmdb": call_counter["tmdb"].get("count", 0),
                     "omdb": call_counter["omdb"].get("count", 0),
+                    "mdblist": call_counter["mdblist"].get("count", 0),
                 },
                 "details": {
                     "updated": updated[:10],
@@ -649,6 +696,7 @@ class Plugin:
                     "api_calls": {
                         "tmdb": call_counter["tmdb"].get("count", 0),
                         "omdb": call_counter["omdb"].get("count", 0),
+                        "mdblist": call_counter["mdblist"].get("count", 0),
                     },
                 }
             )
@@ -710,9 +758,10 @@ class Plugin:
     def _process_program(
         self,
         program,
-        provider,
+        provider_order,
         tmdb_api_key,
         omdb_api_key,
+        mdblist_api_key,
         dry_run,
         force_reapply,
         replace_title,
@@ -723,7 +772,7 @@ class Plugin:
         subtitle_template,
         description_template,
         series_description_template,
-        provider_priority,
+        enable_ratings_enrichment,
         content_type_filter,
         retry_count,
         retry_backoff_seconds,
@@ -754,21 +803,14 @@ class Plugin:
             else:
                 logger.info("EPG Enhancer cache miss: program=%s", program_obj.title)
 
-        provider_order = []
-        if provider == "both":
-            if provider_priority == "omdb_first":
-                provider_order = ["omdb", "tmdb"]
-            else:
-                provider_order = ["tmdb", "omdb"]
-        else:
-            provider_order = [provider]
-
         for chosen_provider in provider_order:
             if metadata:
                 break
             if chosen_provider == "tmdb" and not tmdb_api_key:
                 continue
             if chosen_provider == "omdb" and not omdb_api_key:
+                continue
+            if chosen_provider == "mdblist" and not mdblist_api_key:
                 continue
 
             logger.info("EPG Enhancer lookup attempt: program=%s provider=%s year=%s", program_obj.title, chosen_provider, year)
@@ -790,19 +832,32 @@ class Plugin:
                         backoff_seconds=retry_backoff_seconds,
                     )
                 else:
-                    metadata = self._call_with_retry(
-                        lambda: self._lookup_omdb(
-                            title,
-                            year,
-                            omdb_api_key,
-                            call_counter["omdb"],
-                            subtitle_match_similarity,
-                            content_type_filter,
-                            series_hints,
-                        ),
-                        retries=retry_count,
-                        backoff_seconds=retry_backoff_seconds,
-                    )
+                    if chosen_provider == "omdb":
+                        metadata = self._call_with_retry(
+                            lambda: self._lookup_omdb(
+                                title,
+                                year,
+                                omdb_api_key,
+                                call_counter["omdb"],
+                                subtitle_match_similarity,
+                                content_type_filter,
+                                series_hints,
+                            ),
+                            retries=retry_count,
+                            backoff_seconds=retry_backoff_seconds,
+                        )
+                    else:
+                        metadata = self._call_with_retry(
+                            lambda: self._lookup_mdblist(
+                                title=title,
+                                year=year,
+                                api_key=mdblist_api_key,
+                                call_counter=call_counter["mdblist"],
+                                content_type_filter=content_type_filter,
+                            ),
+                            retries=retry_count,
+                            backoff_seconds=retry_backoff_seconds,
+                        )
             except ApiCallLimitReached:
                 logger.warning("EPG Enhancer API call limit reached: provider=%s program=%s", chosen_provider, program_obj.title)
                 return {
@@ -820,11 +875,34 @@ class Plugin:
             if metadata:
                 used_provider = chosen_provider
                 logger.info("EPG Enhancer metadata match: program=%s provider=%s", program_obj.title, used_provider)
-                if provider == "both" and len(provider_order) > 1 and used_provider == provider_order[1]:
-                    logger.info("EPG Enhancer fallback provider used: program=%s primary=%s fallback=%s", program_obj.title, provider_order[0], provider_order[1])
+                if len(provider_order) > 1 and used_provider != provider_order[0]:
+                    logger.info(
+                        "EPG Enhancer fallback provider used: program=%s primary=%s fallback=%s",
+                        program_obj.title,
+                        provider_order[0],
+                        provider_order[1],
+                    )
                 if cache_context.get("enabled"):
                     self._cache_set(cache_context, cache_key, metadata, used_provider)
                 break
+
+        if metadata and enable_ratings_enrichment and mdblist_api_key and used_provider != "mdblist":
+            try:
+                enriched_ratings = self._lookup_mdblist_ratings(
+                    metadata=metadata,
+                    api_key=mdblist_api_key,
+                    call_counter=call_counter["mdblist"],
+                )
+                if enriched_ratings:
+                    merged_ratings = dict(metadata.get("ratings") or {})
+                    for rating_key, rating_value in enriched_ratings.items():
+                        if rating_value is None or rating_value == "":
+                            continue
+                        if not merged_ratings.get(rating_key):
+                            merged_ratings[rating_key] = rating_value
+                    metadata["ratings"] = merged_ratings
+            except Exception as exc:
+                logger.warning("EPG Enhancer MDBList ratings enrichment failed: program=%s error=%s", program_obj.title, exc)
 
         if not metadata:
             logger.info("EPG Enhancer no metadata match: program=%s reason=%s", program_obj.title, error or "No metadata found")
@@ -928,7 +1006,7 @@ class Plugin:
 
         plugin_state = {
             "content_hash": stored_content_hash,
-            "provider": used_provider or provider,
+            "provider": used_provider or (provider_order[0] if provider_order else "tmdb"),
             "title": metadata.get("title"),
             "year": metadata.get("year"),
             "tmdb_id": metadata.get("tmdb_id"),
@@ -940,7 +1018,13 @@ class Plugin:
         program_obj.description = new_description
         program_obj.custom_properties = custom_props
         program_obj.save(update_fields=update_fields)
-        logger.info("EPG Enhancer updated program: program=%s provider=%s mode=%s title_replaced=%s", program_obj.title, used_provider or provider, description_mode, bool(proposed_title))
+        logger.info(
+            "EPG Enhancer updated program: program=%s provider=%s mode=%s title_replaced=%s",
+            program_obj.title,
+            used_provider or (provider_order[0] if provider_order else "tmdb"),
+            description_mode,
+            bool(proposed_title),
+        )
 
         return {
             "status": "updated",
@@ -1164,6 +1248,195 @@ class Plugin:
             return metadata
 
         return None
+
+    def _lookup_mdblist(
+        self,
+        title,
+        year,
+        api_key,
+        call_counter,
+        content_type_filter,
+        imdb_id=None,
+        tmdb_id=None,
+    ):
+        def _request(params):
+            self._consume_api_call(call_counter)
+            response = self._get_requests_session().get(
+                "https://mdblist.com/api/",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        payload = None
+        if imdb_id:
+            payload = _request({"apikey": api_key, "i": imdb_id})
+        elif tmdb_id:
+            payload = _request({"apikey": api_key, "tm": tmdb_id})
+        else:
+            filter_value = (content_type_filter or "movies").lower()
+            item_type = None
+            if filter_value == "movies":
+                item_type = "movie"
+            elif filter_value == "series":
+                item_type = "series"
+
+            query_params = {"apikey": api_key, "s": title}
+            if year:
+                query_params["y"] = year
+            if item_type:
+                query_params["m"] = item_type
+            payload = _request(query_params)
+
+        item = self._mdblist_extract_item(payload)
+        if not item:
+            return None
+
+        item_type = str(item.get("type") or "").lower()
+        content_type = "series" if item_type in {"tv", "series", "show"} else "movie"
+
+        genres_value = item.get("genre") or item.get("genres") or []
+        if isinstance(genres_value, str):
+            genres = [g.strip() for g in genres_value.split(",") if g.strip()]
+        elif isinstance(genres_value, list):
+            genres = [str(g).strip() for g in genres_value if str(g).strip()]
+        else:
+            genres = []
+
+        cast_value = item.get("actors") or item.get("cast") or []
+        if isinstance(cast_value, str):
+            cast = [actor.strip() for actor in cast_value.split(",") if actor.strip()][:6]
+        elif isinstance(cast_value, list):
+            cast = [str(actor).strip() for actor in cast_value if str(actor).strip()][:6]
+        else:
+            cast = []
+
+        release_date = item.get("released") or item.get("release_date") or ""
+        air_date = item.get("first_air_date") or item.get("air_date") or ""
+
+        metadata = {
+            "provider": "mdblist",
+            "content_type": content_type,
+            "tmdb_id": item.get("tmdbid") or item.get("tmdb_id") or tmdb_id,
+            "imdb_id": item.get("imdbid") or item.get("imdb_id") or imdb_id,
+            "title": item.get("title") or item.get("name") or title,
+            "series_title": (item.get("title") or item.get("name") or "") if content_type == "series" else "",
+            "episode_title": "",
+            "season": None,
+            "episode": None,
+            "year": str(item.get("year") or (str(release_date)[:4] if release_date else "") or (str(air_date)[:4] if air_date else "")),
+            "release_date": release_date if content_type == "movie" else "",
+            "air_date": air_date if content_type == "series" else "",
+            "genres": genres,
+            "overview": item.get("description") or item.get("plot") or item.get("overview") or "",
+            "cast": cast,
+            "runtime": item.get("runtime") or "",
+            "director": item.get("director") or "",
+            "writers": item.get("writer") or item.get("writers") or "",
+            "ratings": self._extract_mdblist_ratings(item),
+        }
+        return metadata
+
+    def _mdblist_extract_item(self, payload):
+        if isinstance(payload, dict):
+            # Direct item payload.
+            if payload.get("title") or payload.get("name"):
+                return payload
+
+            # Search payload variants.
+            for key in ("results", "items", "search", "data"):
+                value = payload.get(key)
+                if isinstance(value, list) and value:
+                    if isinstance(value[0], dict):
+                        return value[0]
+
+            # Some endpoints return nested object.
+            for key in ("result", "item"):
+                value = payload.get(key)
+                if isinstance(value, dict):
+                    return value
+
+        if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            return payload[0]
+
+        return None
+
+    def _extract_mdblist_ratings(self, item):
+        ratings = {}
+        if not isinstance(item, dict):
+            return ratings
+
+        for key in ("score", "score_average", "mdblist_score"):
+            if item.get(key) not in (None, ""):
+                ratings["mdblist"] = item.get(key)
+                break
+
+        raw_ratings = item.get("ratings")
+        if isinstance(raw_ratings, list):
+            for rating in raw_ratings:
+                if not isinstance(rating, dict):
+                    continue
+                source = (rating.get("source") or rating.get("name") or "").strip().lower()
+                value = rating.get("value")
+                if not source or value in (None, ""):
+                    continue
+                if source in {"imdb", "internet movie database"}:
+                    ratings["imdb"] = value
+                elif source in {"rotten tomatoes", "rottentomatoes", "rt"}:
+                    ratings["rt"] = value
+                elif source in {"metacritic", "meta"}:
+                    ratings["metacritic"] = value
+                elif source == "tmdb":
+                    ratings["tmdb"] = value
+
+        return ratings
+
+    def _lookup_mdblist_ratings(self, metadata, api_key, call_counter):
+        mdblist_metadata = self._lookup_mdblist(
+            title=metadata.get("title"),
+            year=metadata.get("year"),
+            api_key=api_key,
+            call_counter=call_counter,
+            content_type_filter=metadata.get("content_type") or "both",
+            imdb_id=metadata.get("imdb_id"),
+            tmdb_id=metadata.get("tmdb_id"),
+        )
+        if not mdblist_metadata:
+            return {}
+
+        if not metadata.get("imdb_id") and mdblist_metadata.get("imdb_id"):
+            metadata["imdb_id"] = mdblist_metadata.get("imdb_id")
+        if not metadata.get("tmdb_id") and mdblist_metadata.get("tmdb_id"):
+            metadata["tmdb_id"] = mdblist_metadata.get("tmdb_id")
+
+        return mdblist_metadata.get("ratings") or {}
+
+    def _build_provider_order(self, primary_provider, fallback_csv, legacy_provider, legacy_priority):
+        allowed = {"tmdb", "omdb", "mdblist"}
+
+        if primary_provider not in allowed:
+            primary_provider = "tmdb"
+
+        fallback_values = []
+        if fallback_csv:
+            fallback_values = [
+                value.strip().lower()
+                for value in str(fallback_csv).split(",")
+                if value and value.strip()
+            ]
+        elif legacy_provider == "both":
+            fallback_values = ["omdb"] if legacy_priority == "tmdb_first" else ["tmdb"]
+            primary_provider = "tmdb" if legacy_priority == "tmdb_first" else "omdb"
+
+        order = [primary_provider]
+        for value in fallback_values:
+            if value not in allowed:
+                continue
+            if value in order:
+                continue
+            order.append(value)
+        return order
 
     def _lookup_omdb(
         self,
@@ -1665,13 +1938,14 @@ class Plugin:
             api_calls = progress.get("api_calls", {})
             tmdb_calls = api_calls.get("tmdb", 0)
             omdb_calls = api_calls.get("omdb", 0)
+            mdblist_calls = api_calls.get("mdblist", 0)
 
             total_str = "?" if total is None else str(total)
             remaining_str = "?" if remaining is None else str(remaining)
             message = (
                 f"Progress [{action_name}:{state}] {attempted}/{total_str} attempted, "
                 f"remaining {remaining_str}, matched {matched}, updated {updated}, "
-                f"skipped {skipped}, API TMDB/OMDb {tmdb_calls}/{omdb_calls}."
+                f"skipped {skipped}, API TMDB/OMDb/MDBList {tmdb_calls}/{omdb_calls}/{mdblist_calls}."
             )
 
             return {
@@ -1732,6 +2006,7 @@ class Plugin:
             api_calls = summary.get("api_calls", {})
             tmdb_calls = api_calls.get("tmdb", 0)
             omdb_calls = api_calls.get("omdb", 0)
+            mdblist_calls = api_calls.get("mdblist", 0)
             saved_at = self._format_timestamp(payload.get("saved_at", ""))
             report_file = (
                 payload.get("report_file")
@@ -1743,7 +2018,7 @@ class Plugin:
                 f"Last run ({'dry-run' if dry_run else 'enhance'}) attempted {attempted}, "
                 f"Report: {report_file}, "
                 f"matched {matched}, updated {updated}, skipped {skipped}, "
-                f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved: {saved_at}. "
+                f"API TMDB/OMDb/MDBList {tmdb_calls}/{omdb_calls}/{mdblist_calls}. Saved: {saved_at}. "
             )
 
             return {
@@ -1855,7 +2130,7 @@ class Plugin:
                 "matched": 0,
                 "skipped": 0,
                 "remaining": None,
-                "api_calls": {"tmdb": 0, "omdb": 0},
+                "api_calls": {"tmdb": 0, "omdb": 0, "mdblist": 0},
                 "started_at": queued_at,
                 "finished_at": None,
             },
@@ -2054,7 +2329,6 @@ class Plugin:
             return True
         finally:
             self._release_cache_lock(lock_path, lock_fd)
-
 
     def _acquire_cache_lock(self, lock_path, timeout_seconds=5):
         deadline = time.time() + timeout_seconds

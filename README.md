@@ -26,7 +26,7 @@ Download `epg_enhancer.zip` from the Releases page, then import via `Settings ->
 - Run **Enhance Programs** with `Dry Run: true` after upgrades to verify template/settings behavior.
 
 ### Method 2 (Release Asset)
-- Stop Dispatcharr, remove the existing `epg_enhancer` plugin folder (or delete the plugin from the Dispatcharr UI) 
+- Stop Dispatcharr, remove the existing `epg_enhancer` plugin folder (or delete the plugin from the Dispatcharr UI)
 - Import/install the new version from releases.
 - Restart Dispatcharr app and worker processes.
 - Run **Enhance Programs** with `Dry Run: true` before first enhance on each new version.
@@ -105,6 +105,5 @@ After dry-run looks good, set `Dry Run` to `false` and run **Enhance Programs** 
 
 
 ## License
-This project currently has no license file.
-If you plan to share or accept contributions, add a `LICENSE` file (MIT is common for plugins).
+This project includes a [`LICENSE`](LICENSE) file.
 

@@ -1413,7 +1413,7 @@ class Plugin:
 
             message = (
                 f"Last run ({'dry-run' if dry_run else 'enhance'}) attempted {attempted}, "
-                f"Report: {report_file}"
+                f"Report: {report_file}, "
                 f"matched {matched}, updated {updated}, skipped {skipped}, "
                 f"API TMDB/OMDb {tmdb_calls}/{omdb_calls}. Saved: {saved_at}. "
             )
